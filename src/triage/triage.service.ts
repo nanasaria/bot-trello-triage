@@ -13,6 +13,7 @@ export class TriageService {
 
   private readonly processedActionIds = new Map<string, true>();
   private readonly PROCESSED_IDS_MAX = 1000;
+  private readonly TRIAGE_DELAY_MS = 150_000;
 
   private readonly jobQueue: TrelloAction[] = [];
   private isProcessing = false;
@@ -106,11 +107,10 @@ export class TriageService {
   }
 
   private async processTriageForCard(cardId: string): Promise<void> {
-    const delayMs = 150_000;
     this.logger.log(
-      `Card ${cardId} aguardando ${delayMs / 1000}s antes de iniciar a triagem...`,
+      `Card ${cardId} aguardando ${this.TRIAGE_DELAY_MS / 1000}s antes de iniciar a triagem...`,
     );
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await new Promise((resolve) => setTimeout(resolve, this.TRIAGE_DELAY_MS));
 
     const alreadyTriaged = await this.trelloService.hasTriageComment(cardId);
     if (alreadyTriaged) {
@@ -224,7 +224,7 @@ export class TriageService {
     spreadsheetTexts: string[];
     cleanup: () => Promise<void>;
   }> {
-    const empty = {
+    const emptyResult = {
       imagePaths: [],
       spreadsheetTexts: [],
       cleanup: async () => {},
@@ -239,7 +239,7 @@ export class TriageService {
       this.logger.warn(
         `Falha ao buscar anexos do card ${cardId}: ${(err as Error).message}`,
       );
-      return empty;
+      return emptyResult;
     }
 
     const tmpDir =

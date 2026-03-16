@@ -13,6 +13,8 @@ export interface ClaudeTriageResult {
 export class ClaudeService {
   private readonly logger = new Logger(ClaudeService.name);
 
+  private readonly MAX_RETRY_ATTEMPTS = 3;
+
   private readonly claudeBin: string;
   private readonly claudeModel: string;
   private readonly claudeMaxTurns: number;
@@ -43,21 +45,20 @@ export class ClaudeService {
   private async runWithRetry(
     prompt: string,
     repoPath: string,
-    maxAttempts = 3,
   ): Promise<ClaudeTriageResult> {
     let lastError: Error | undefined;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= this.MAX_RETRY_ATTEMPTS; attempt++) {
       try {
         const rawOutput = await this.spawnClaude(prompt, repoPath);
         return this.parseAndValidate(rawOutput);
       } catch (err) {
         lastError = err as Error;
         this.logger.warn(
-          `Claude CLI falhou (tentativa ${attempt}/${maxAttempts}): ${lastError.message}`,
+          `Claude CLI falhou (tentativa ${attempt}/${this.MAX_RETRY_ATTEMPTS}): ${lastError.message}`,
         );
 
-        if (attempt < maxAttempts) {
+        if (attempt < this.MAX_RETRY_ATTEMPTS) {
           const delayMs = 15_000 * attempt;
           this.logger.log(`Aguardando ${delayMs / 1000}s antes de retentar...`);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -66,7 +67,7 @@ export class ClaudeService {
     }
 
     throw new Error(
-      `Claude CLI falhou após ${maxAttempts} tentativas. Último erro: ${lastError?.message}`,
+      `Claude CLI falhou após ${this.MAX_RETRY_ATTEMPTS} tentativas. Último erro: ${lastError?.message}`,
     );
   }
 
@@ -229,16 +230,16 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
   }
 
   private parseAndValidate(output: string): ClaudeTriageResult {
-    const start = output.indexOf('{');
-    const end = output.lastIndexOf('}');
+    const jsonStart = output.indexOf('{');
+    const jsonEnd = output.lastIndexOf('}');
 
-    if (start === -1 || end === -1 || start > end) {
+    if (jsonStart === -1 || jsonEnd === -1 || jsonStart > jsonEnd) {
       throw new Error(
         `Nenhum JSON encontrado na saída do Claude.\nSaída bruta: ${output.slice(0, 500)}`,
       );
     }
 
-    const jsonStr = output.slice(start, end + 1);
+    const jsonStr = output.slice(jsonStart, jsonEnd + 1);
     let parsed: unknown;
 
     try {

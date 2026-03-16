@@ -116,11 +116,11 @@ export class TrelloService implements OnModuleInit {
     const url = this.buildUrl(`/cards/${cardId}/attachments`);
     const res = await fetch(url);
     await this.assertOk(res, `buscar anexos do card ${cardId}`);
-    const all = (await res.json()) as TrelloAttachment[];
+    const attachments = (await res.json()) as TrelloAttachment[];
 
     return {
-      images: all.filter((a) => a.mimeType?.startsWith('image/')),
-      spreadsheets: all.filter((a) => this.isSpreadsheet(a)),
+      images: attachments.filter((a) => a.mimeType?.startsWith('image/')),
+      spreadsheets: attachments.filter((a) => this.isSpreadsheet(a)),
     };
   }
 
@@ -202,10 +202,10 @@ export class TrelloService implements OnModuleInit {
     return url.toString();
   }
 
-  private async assertOk(res: Response, ctx: string): Promise<void> {
+  private async assertOk(res: Response, operation: string): Promise<void> {
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`Trello API erro ao ${ctx}: HTTP ${res.status} — ${body}`);
+      throw new Error(`Trello API erro ao ${operation}: HTTP ${res.status} — ${body}`);
     }
   }
 }

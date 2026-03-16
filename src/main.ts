@@ -17,6 +17,6 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((err) => {
-  console.error('Falha crítica ao iniciar a aplicação:', err);
+  new Logger('Bootstrap').error('Falha crítica ao iniciar a aplicação', err);
   process.exit(1);
 });

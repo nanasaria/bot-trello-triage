@@ -139,12 +139,29 @@ curl -X POST "https://api.trello.com/1/webhooks" \
   }'
 ```
 
-## Health check
+## Endpoints
 
-Verifique se o bot está operacional acessando:
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `HEAD` | `/trello/webhook` | Validação do webhook pelo Trello (responde 200) |
+| `POST` | `/trello/webhook` | Recebe eventos do Trello |
+| `GET` | `/health` | Verifica se o bot está operacional |
+
+### Health check
 
 ```http
 GET http://localhost:3080/health
 ```
 
-Retorna o status da conexão com o Trello e do Claude CLI.
+Exemplo de resposta:
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-03-16T12:00:00.000Z",
+  "checks": {
+    "trello": { "ok": true, "message": "autenticado como @seu-usuario" },
+    "claude": { "ok": true, "message": "claude 1.x.x" }
+  }
+}
+```

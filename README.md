@@ -1,12 +1,12 @@
 # bot-triagem-trello
 
-Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para a lista alvo (ex: `Pendentes Analise - Chamados`), o bot aguarda 3 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos.
+Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para a lista alvo (ex: `Pendentes Analise - Chamados`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos.
 
 ## Como funciona
 
 1. O Trello envia um evento via webhook para o bot
 2. O bot identifica se o card foi criado/movido para a lista configurada
-3. Após 3 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens e planilhas XLSX)
+3. Após 2 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens e planilhas XLSX)
 4. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
 5. Posta um comentário de triagem no card com o resultado da análise
 
@@ -58,10 +58,10 @@ O ngrok é necessário para que o Trello consiga enviar webhooks para o seu serv
    ngrok config add-authtoken SEU_TOKEN_AQUI
    ```
 
-3. Inicie o túnel na porta do servidor (padrão 3000):
+3. Inicie o túnel na porta do servidor (padrão 3080):
 
    ```bash
-   ngrok http 3000
+   ngrok http 3080
    ```
 4. Copie a URL pública gerada (ex: `https://xxxx-xxxx.ngrok-free.app`) — ela será usada em `TRELLO_WEBHOOK_CALLBACK_URL`
 
@@ -77,7 +77,7 @@ Preencha as variáveis no `.env`:
 
 | Variável | Descrição |
 | --- | --- |
-| `PORT` | Porta do servidor (padrão: `3000`) |
+| `PORT` | Porta do servidor (padrão: `3080`) |
 | `TRELLO_KEY` | API Key do Trello — obtenha em [trello.com/app-key](https://trello.com/app-key) |
 | `TRELLO_TOKEN` | Token do Trello — gerado na mesma página |
 | `TRELLO_OAUTH_SECRET` | OAuth Secret da aplicação — campo "Secret" em [trello.com/app-key](https://trello.com/app-key) |
@@ -144,7 +144,7 @@ curl -X POST "https://api.trello.com/1/webhooks" \
 Verifique se o bot está operacional acessando:
 
 ```http
-GET http://localhost:3000/health
+GET http://localhost:3080/health
 ```
 
 Retorna o status da conexão com o Trello e do Claude CLI.

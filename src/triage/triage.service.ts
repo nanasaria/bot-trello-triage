@@ -53,10 +53,10 @@ export class TriageService {
           (err as Error).stack,
         );
       }
-      processNext();
+      void processNext();
     };
 
-    processNext();
+    void processNext();
   }
 
   private async handleAction(action: TrelloAction): Promise<void> {
@@ -175,7 +175,7 @@ export class TriageService {
 
   private trackActionId(actionId: string): void {
     if (this.processedActionIds.size >= this.PROCESSED_IDS_MAX) {
-      const oldest = this.processedActionIds.keys().next().value;
+      const oldest = this.processedActionIds.keys().next().value as string;
       this.processedActionIds.delete(oldest);
     }
     this.processedActionIds.set(actionId, true);
@@ -299,7 +299,7 @@ export class TriageService {
   private parseRepoLabelMap(): Record<string, string> {
     const raw = this.config.get<string>('REPO_LABEL_MAP', '{}');
     try {
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       if (
         typeof parsed !== 'object' ||
         parsed === null ||

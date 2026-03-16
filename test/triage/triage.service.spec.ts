@@ -5,6 +5,24 @@ import { TrelloService } from '../../src/trello/trello.service';
 import { ClaudeService } from '../../src/claude/claude.service';
 import type { TrelloAction } from '../../src/trello/trello.types';
 
+type TriageResult = {
+  hipoteseInicial: string;
+  arquivosCandidatos: string[];
+  proximosPassosSugeridos: string[];
+};
+
+type TriageServicePrivate = {
+  extractTargetListId(action: TrelloAction): string | null;
+  resolveRepoPath(labelNames: string[]): string | null;
+  formatTriageComment(result: TriageResult): string;
+  trackActionId(actionId: string): void;
+  handleAction(action: TrelloAction): Promise<void>;
+  processedActionIds: Map<string, true>;
+  PROCESSED_IDS_MAX: number;
+  repoLabelMap: Record<string, string>;
+  defaultRepoPath: string;
+};
+
 jest.mock('node:fs/promises', () => ({
   mkdtemp: jest.fn().mockResolvedValue('/tmp/triage-card-abc'),
   rm: jest.fn().mockResolvedValue(undefined),
@@ -22,7 +40,9 @@ const mockTrelloService = {
     checklists: [],
   }),
   fetchRecentComments: jest.fn().mockResolvedValue([]),
-  fetchAttachments: jest.fn().mockResolvedValue({ images: [], spreadsheets: [] }),
+  fetchAttachments: jest
+    .fn()
+    .mockResolvedValue({ images: [], spreadsheets: [] }),
   downloadAttachmentToDir: jest.fn(),
   downloadSpreadsheetAsText: jest.fn(),
   postComment: jest.fn().mockResolvedValue(undefined),
@@ -71,7 +91,11 @@ describe('TriageService', () => {
           card: { id: 'c1', name: 'Card' },
         },
       };
-      expect((service as any).extractTargetListId(action)).toBe('list-1');
+      expect(
+        (service as unknown as TriageServicePrivate).extractTargetListId(
+          action,
+        ),
+      ).toBe('list-1');
     });
 
     it('retorna id da listAfter em ação updateCard', () => {
@@ -84,7 +108,11 @@ describe('TriageService', () => {
           card: { id: 'c1', name: 'Card' },
         },
       };
-      expect((service as any).extractTargetListId(action)).toBe('list-2');
+      expect(
+        (service as unknown as TriageServicePrivate).extractTargetListId(
+          action,
+        ),
+      ).toBe('list-2');
     });
 
     it('retorna null para updateCard sem listAfter', () => {
@@ -94,7 +122,11 @@ describe('TriageService', () => {
         date: '',
         data: { card: { id: 'c1', name: 'Card' } },
       };
-      expect((service as any).extractTargetListId(action)).toBeNull();
+      expect(
+        (service as unknown as TriageServicePrivate).extractTargetListId(
+          action,
+        ),
+      ).toBeNull();
     });
 
     it('retorna null para tipos não tratados', () => {
@@ -104,38 +136,54 @@ describe('TriageService', () => {
         date: '',
         data: {},
       };
-      expect((service as any).extractTargetListId(action)).toBeNull();
+      expect(
+        (service as unknown as TriageServicePrivate).extractTargetListId(
+          action,
+        ),
+      ).toBeNull();
     });
   });
 
   describe('resolveRepoPath', () => {
     it('retorna caminho pelo mapeamento de label', () => {
-      expect((service as any).resolveRepoPath(['bug', 'repo:api'])).toBe(
-        '/srv/api',
-      );
+      expect(
+        (service as unknown as TriageServicePrivate).resolveRepoPath([
+          'bug',
+          'repo:api',
+        ]),
+      ).toBe('/srv/api');
     });
 
     it('retorna defaultRepoPath quando nenhuma label repo: é encontrada', () => {
-      expect((service as any).resolveRepoPath(['bug', 'frontend'])).toBe(
-        '/srv/default',
-      );
+      expect(
+        (service as unknown as TriageServicePrivate).resolveRepoPath([
+          'bug',
+          'frontend',
+        ]),
+      ).toBe('/srv/default');
     });
 
     it('retorna null quando não há label e defaultRepoPath está vazio', () => {
-      (service as any).defaultRepoPath = '';
-      expect((service as any).resolveRepoPath([])).toBeNull();
+      (service as unknown as TriageServicePrivate).defaultRepoPath = '';
+      expect(
+        (service as unknown as TriageServicePrivate).resolveRepoPath([]),
+      ).toBeNull();
     });
 
     it('ignora label repo: que não está no mapa', () => {
-      expect((service as any).resolveRepoPath(['repo:desconhecido'])).toBe(
-        '/srv/default',
-      );
+      expect(
+        (service as unknown as TriageServicePrivate).resolveRepoPath([
+          'repo:desconhecido',
+        ]),
+      ).toBe('/srv/default');
     });
   });
 
   describe('formatTriageComment', () => {
     it('inclui o cabeçalho obrigatório', () => {
-      const result = (service as any).formatTriageComment({
+      const result = (
+        service as unknown as TriageServicePrivate
+      ).formatTriageComment({
         hipoteseInicial: 'Hipótese',
         arquivosCandidatos: ['src/app.ts'],
         proximosPassosSugeridos: ['Passo 1'],
@@ -144,7 +192,9 @@ describe('TriageService', () => {
     });
 
     it('formata arquivos candidatos como lista', () => {
-      const result = (service as any).formatTriageComment({
+      const result = (
+        service as unknown as TriageServicePrivate
+      ).formatTriageComment({
         hipoteseInicial: 'Hipótese',
         arquivosCandidatos: ['src/a.ts', 'src/b.ts'],
         proximosPassosSugeridos: [],
@@ -154,7 +204,9 @@ describe('TriageService', () => {
     });
 
     it('formata próximos passos numerados', () => {
-      const result = (service as any).formatTriageComment({
+      const result = (
+        service as unknown as TriageServicePrivate
+      ).formatTriageComment({
         hipoteseInicial: 'Hipótese',
         arquivosCandidatos: [],
         proximosPassosSugeridos: ['Verificar logs', 'Testar endpoint'],
@@ -164,7 +216,9 @@ describe('TriageService', () => {
     });
 
     it('usa mensagem padrão quando não há arquivos candidatos', () => {
-      const result = (service as any).formatTriageComment({
+      const result = (
+        service as unknown as TriageServicePrivate
+      ).formatTriageComment({
         hipoteseInicial: 'Hipótese',
         arquivosCandidatos: [],
         proximosPassosSugeridos: [],
@@ -175,25 +229,44 @@ describe('TriageService', () => {
 
   describe('trackActionId', () => {
     it('adiciona actionId ao mapa', () => {
-      (service as any).trackActionId('action-1');
-      expect((service as any).processedActionIds.has('action-1')).toBe(true);
+      (service as unknown as TriageServicePrivate).trackActionId('action-1');
+      expect(
+        (service as unknown as TriageServicePrivate).processedActionIds.has(
+          'action-1',
+        ),
+      ).toBe(true);
     });
 
     it('remove o mais antigo quando o limite é atingido', () => {
-      const max: number = (service as any).PROCESSED_IDS_MAX;
+      const max: number = (service as unknown as TriageServicePrivate)
+        .PROCESSED_IDS_MAX;
       for (let i = 0; i < max; i++) {
-        (service as any).trackActionId(`action-${i}`);
+        (service as unknown as TriageServicePrivate).trackActionId(
+          `action-${i}`,
+        );
       }
-      (service as any).trackActionId('action-nova');
-      expect((service as any).processedActionIds.has('action-0')).toBe(false);
-      expect((service as any).processedActionIds.has('action-nova')).toBe(true);
-      expect((service as any).processedActionIds.size).toBe(max);
+      (service as unknown as TriageServicePrivate).trackActionId('action-nova');
+      expect(
+        (service as unknown as TriageServicePrivate).processedActionIds.has(
+          'action-0',
+        ),
+      ).toBe(false);
+      expect(
+        (service as unknown as TriageServicePrivate).processedActionIds.has(
+          'action-nova',
+        ),
+      ).toBe(true);
+      expect(
+        (service as unknown as TriageServicePrivate).processedActionIds.size,
+      ).toBe(max);
     });
   });
 
   describe('parseRepoLabelMap', () => {
     it('carrega o mapa do REPO_LABEL_MAP corretamente', () => {
-      expect((service as any).repoLabelMap).toEqual({ 'repo:api': '/srv/api' });
+      expect((service as unknown as TriageServicePrivate).repoLabelMap).toEqual(
+        { 'repo:api': '/srv/api' },
+      );
     });
 
     it('retorna mapa vazio quando REPO_LABEL_MAP é JSON inválido', () => {
@@ -204,11 +277,11 @@ describe('TriageService', () => {
         }),
       };
       const svc = new TriageService(
-        mockTrelloService as any,
-        mockClaudeService as any,
-        invalidConfig as any,
+        mockTrelloService as unknown as TrelloService,
+        mockClaudeService as unknown as ClaudeService,
+        invalidConfig as unknown as ConfigService,
       );
-      expect((svc as any).repoLabelMap).toEqual({});
+      expect((svc as unknown as TriageServicePrivate).repoLabelMap).toEqual({});
     });
 
     it('retorna mapa vazio quando REPO_LABEL_MAP é um array', () => {
@@ -219,11 +292,11 @@ describe('TriageService', () => {
         }),
       };
       const svc = new TriageService(
-        mockTrelloService as any,
-        mockClaudeService as any,
-        arrayConfig as any,
+        mockTrelloService as unknown as TrelloService,
+        mockClaudeService as unknown as ClaudeService,
+        arrayConfig as unknown as ConfigService,
       );
-      expect((svc as any).repoLabelMap).toEqual({});
+      expect((svc as unknown as TriageServicePrivate).repoLabelMap).toEqual({});
     });
   });
 
@@ -237,14 +310,20 @@ describe('TriageService', () => {
     });
 
     it('ignora action já processada', async () => {
-      (service as any).processedActionIds.set('a-dup', true);
+      (service as unknown as TriageServicePrivate).processedActionIds.set(
+        'a-dup',
+        true,
+      );
       const action: TrelloAction = {
         id: 'a-dup',
         type: 'createCard',
         date: '',
-        data: { list: { id: 'list-alvo', name: 'Lista' }, card: { id: 'c1', name: 'Card' } },
+        data: {
+          list: { id: 'list-alvo', name: 'Lista' },
+          card: { id: 'c1', name: 'Card' },
+        },
       };
-      await (service as any).handleAction(action);
+      await (service as unknown as TriageServicePrivate).handleAction(action);
       expect(mockTrelloService.getTargetListId).not.toHaveBeenCalled();
     });
 
@@ -253,12 +332,15 @@ describe('TriageService', () => {
         id: 'a1',
         type: 'createCard',
         date: '',
-        data: { list: { id: 'outra-lista', name: 'Outra' }, card: { id: 'c1', name: 'Card' } },
+        data: {
+          list: { id: 'outra-lista', name: 'Outra' },
+          card: { id: 'c1', name: 'Card' },
+        },
       };
       const processSpy = jest
         .spyOn(service as any, 'processTriageForCard')
         .mockResolvedValue(undefined);
-      await (service as any).handleAction(action);
+      await (service as unknown as TriageServicePrivate).handleAction(action);
       expect(processSpy).not.toHaveBeenCalled();
     });
 
@@ -267,12 +349,15 @@ describe('TriageService', () => {
         id: 'a-novo',
         type: 'createCard',
         date: '',
-        data: { list: { id: 'list-alvo', name: 'Lista Alvo' }, card: { id: 'c1', name: 'Card' } },
+        data: {
+          list: { id: 'list-alvo', name: 'Lista Alvo' },
+          card: { id: 'c1', name: 'Card' },
+        },
       };
       const processSpy = jest
         .spyOn(service as any, 'processTriageForCard')
         .mockResolvedValue(undefined);
-      await (service as any).handleAction(action);
+      await (service as unknown as TriageServicePrivate).handleAction(action);
       expect(processSpy).toHaveBeenCalledWith('c1');
     });
   });

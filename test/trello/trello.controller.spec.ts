@@ -1,13 +1,21 @@
 import { UnauthorizedException } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request } from 'express';
 import { createHmac } from 'node:crypto';
 import { TrelloController } from '../../src/trello/trello.controller';
 import { TriageService } from '../../src/triage/triage.service';
 import { ConfigService } from '@nestjs/config';
+import type { TrelloWebhookPayload } from '../../src/trello/trello.types';
+
+type ControllerPrivate = {
+  verifySignature(rawBody: Buffer | undefined, signature: string): void;
+};
 
 const WEBHOOK_SECRET = 'test-oauth-secret';
 const CALLBACK_URL = 'https://test.ngrok.app/trello/webhook';
 
-const mockTriageService = { enqueue: jest.fn() } as unknown as TriageService;
+const mockEnqueue = jest.fn();
+const mockTriageService = { enqueue: mockEnqueue } as unknown as TriageService;
 
 const mockConfig = {
   getOrThrow: jest.fn((key: string) => {
@@ -43,16 +51,20 @@ describe('TrelloController', () => {
     it('enfileira a action quando payload é válido', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('true');
       const action = { id: 'a1', type: 'createCard', date: '', data: {} };
-      const req = { rawBody: Buffer.from('{}') } as any;
-      controller.receiveWebhook(req, { action } as any, 'sig');
-      expect(mockTriageService.enqueue).toHaveBeenCalledWith(action);
+      const req = {
+        rawBody: Buffer.from('{}'),
+      } as unknown as RawBodyRequest<Request>;
+      controller.receiveWebhook(req, { action } as TrelloWebhookPayload, 'sig');
+      expect(mockEnqueue).toHaveBeenCalledWith(action);
     });
 
     it('ignora webhook sem campo action', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('true');
-      const req = { rawBody: Buffer.from('{}') } as any;
-      controller.receiveWebhook(req, {} as any, 'sig');
-      expect(mockTriageService.enqueue).not.toHaveBeenCalled();
+      const req = {
+        rawBody: Buffer.from('{}'),
+      } as unknown as RawBodyRequest<Request>;
+      controller.receiveWebhook(req, {} as TrelloWebhookPayload, 'sig');
+      expect(mockEnqueue).not.toHaveBeenCalled();
     });
   });
 
@@ -60,21 +72,30 @@ describe('TrelloController', () => {
     it('pula verificação quando TRELLO_SKIP_SIGNATURE é true', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('true');
       expect(() =>
-        (controller as any).verifySignature(Buffer.from('body'), 'invalida'),
+        (controller as unknown as ControllerPrivate).verifySignature(
+          Buffer.from('body'),
+          'invalida',
+        ),
       ).not.toThrow();
     });
 
     it('lança UnauthorizedException quando assinatura está ausente', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('false');
       expect(() =>
-        (controller as any).verifySignature(Buffer.from('body'), ''),
+        (controller as unknown as ControllerPrivate).verifySignature(
+          Buffer.from('body'),
+          '',
+        ),
       ).toThrow(UnauthorizedException);
     });
 
     it('lança UnauthorizedException quando rawBody está vazio', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('false');
       expect(() =>
-        (controller as any).verifySignature(undefined, 'sig'),
+        (controller as unknown as ControllerPrivate).verifySignature(
+          undefined,
+          'sig',
+        ),
       ).toThrow(UnauthorizedException);
     });
 
@@ -83,7 +104,10 @@ describe('TrelloController', () => {
       const rawBody = Buffer.from('{"test":true}');
       const validSig = makeSignature(rawBody);
       expect(() =>
-        (controller as any).verifySignature(rawBody, validSig),
+        (controller as unknown as ControllerPrivate).verifySignature(
+          rawBody,
+          validSig,
+        ),
       ).not.toThrow();
     });
 
@@ -91,7 +115,10 @@ describe('TrelloController', () => {
       (mockConfig.get as jest.Mock).mockReturnValue('false');
       const rawBody = Buffer.from('{"test":true}');
       expect(() =>
-        (controller as any).verifySignature(rawBody, 'assinatura-errada'),
+        (controller as unknown as ControllerPrivate).verifySignature(
+          rawBody,
+          'assinatura-errada',
+        ),
       ).toThrow(UnauthorizedException);
     });
   });

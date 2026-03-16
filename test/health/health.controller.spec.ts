@@ -1,6 +1,17 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
+type CheckStatus = { ok: boolean; message: string };
+type HealthResult = {
+  status: string;
+  timestamp: string;
+  checks: { trello: CheckStatus; claude: CheckStatus };
+};
+type ControllerPrivate = {
+  checkTrello(): Promise<CheckStatus>;
+  checkClaude(): Promise<CheckStatus>;
+};
+
 jest.mock('node:util', () => ({
   promisify: jest.fn((fn: unknown) => fn),
 }));
@@ -47,23 +58,29 @@ describe('HealthController', () => {
         ok: true,
         json: jest.fn().mockResolvedValue({ username: 'meubot' }),
       });
-      execFileAsyncMock.mockResolvedValue({ stdout: 'claude 1.2.3\n', stderr: '' });
+      execFileAsyncMock.mockResolvedValue({
+        stdout: 'claude 1.2.3\n',
+        stderr: '',
+      });
 
-      const result = await controller.check();
+      const result = (await controller.check()) as HealthResult;
 
       expect(result.status).toBe('ok');
-      expect((result.checks as any).trello.ok).toBe(true);
-      expect((result.checks as any).claude.ok).toBe(true);
+      expect(result.checks.trello.ok).toBe(true);
+      expect(result.checks.claude.ok).toBe(true);
     });
 
     it('retorna status degraded quando Trello falha', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 401 });
-      execFileAsyncMock.mockResolvedValue({ stdout: 'claude 1.2.3\n', stderr: '' });
+      execFileAsyncMock.mockResolvedValue({
+        stdout: 'claude 1.2.3\n',
+        stderr: '',
+      });
 
-      const result = await controller.check();
+      const result = (await controller.check()) as HealthResult;
 
       expect(result.status).toBe('degraded');
-      expect((result.checks as any).trello.ok).toBe(false);
+      expect(result.checks.trello.ok).toBe(false);
     });
 
     it('retorna status degraded quando Claude falha', async () => {
@@ -71,23 +88,28 @@ describe('HealthController', () => {
         ok: true,
         json: jest.fn().mockResolvedValue({ username: 'meubot' }),
       });
-      execFileAsyncMock.mockRejectedValue(new Error('command not found: claude'));
+      execFileAsyncMock.mockRejectedValue(
+        new Error('command not found: claude'),
+      );
 
-      const result = await controller.check();
+      const result = (await controller.check()) as HealthResult;
 
       expect(result.status).toBe('degraded');
-      expect((result.checks as any).claude.ok).toBe(false);
+      expect(result.checks.claude.ok).toBe(false);
     });
 
     it('retorna status degraded quando fetch do Trello lança erro', async () => {
       fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
-      execFileAsyncMock.mockResolvedValue({ stdout: 'claude 1.2.3\n', stderr: '' });
+      execFileAsyncMock.mockResolvedValue({
+        stdout: 'claude 1.2.3\n',
+        stderr: '',
+      });
 
-      const result = await controller.check();
+      const result = (await controller.check()) as HealthResult;
 
       expect(result.status).toBe('degraded');
-      expect((result.checks as any).trello.ok).toBe(false);
-      expect((result.checks as any).trello.message).toContain('ECONNREFUSED');
+      expect(result.checks.trello.ok).toBe(false);
+      expect(result.checks.trello.message).toContain('ECONNREFUSED');
     });
 
     it('inclui timestamp no retorno', async () => {
@@ -95,12 +117,15 @@ describe('HealthController', () => {
         ok: true,
         json: jest.fn().mockResolvedValue({ username: 'meubot' }),
       });
-      execFileAsyncMock.mockResolvedValue({ stdout: 'claude 1.2.3\n', stderr: '' });
+      execFileAsyncMock.mockResolvedValue({
+        stdout: 'claude 1.2.3\n',
+        stderr: '',
+      });
 
-      const result = await controller.check();
+      const result = (await controller.check()) as HealthResult;
 
       expect(typeof result.timestamp).toBe('string');
-      expect(new Date(result.timestamp as string).getTime()).not.toBeNaN();
+      expect(new Date(result.timestamp).getTime()).not.toBeNaN();
     });
   });
 
@@ -110,14 +135,18 @@ describe('HealthController', () => {
         ok: true,
         json: jest.fn().mockResolvedValue({ username: 'meubot' }),
       });
-      const result = await (controller as any).checkTrello();
+      const result = await (
+        controller as unknown as ControllerPrivate
+      ).checkTrello();
       expect(result.ok).toBe(true);
       expect(result.message).toContain('@meubot');
     });
 
     it('retorna ok false com status HTTP em caso de erro', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 401 });
-      const result = await (controller as any).checkTrello();
+      const result = await (
+        controller as unknown as ControllerPrivate
+      ).checkTrello();
       expect(result.ok).toBe(false);
       expect(result.message).toContain('401');
     });
@@ -125,15 +154,22 @@ describe('HealthController', () => {
 
   describe('checkClaude', () => {
     it('retorna mensagem com versão do Claude', async () => {
-      execFileAsyncMock.mockResolvedValue({ stdout: '  claude 1.2.3  ', stderr: '' });
-      const result = await (controller as any).checkClaude();
+      execFileAsyncMock.mockResolvedValue({
+        stdout: '  claude 1.2.3  ',
+        stderr: '',
+      });
+      const result = await (
+        controller as unknown as ControllerPrivate
+      ).checkClaude();
       expect(result.ok).toBe(true);
       expect(result.message).toBe('claude 1.2.3');
     });
 
     it('retorna ok false quando binário não é encontrado', async () => {
       execFileAsyncMock.mockRejectedValue(new Error('command not found'));
-      const result = await (controller as any).checkClaude();
+      const result = await (
+        controller as unknown as ControllerPrivate
+      ).checkClaude();
       expect(result.ok).toBe(false);
       expect(result.message).toContain('command not found');
     });

@@ -98,18 +98,25 @@ export class TriageService {
       await this.processTriageForCard(cardId);
     } catch (err) {
       this.processedActionIds.delete(actionId);
-      this.logger.error(`Triagem falhou para o card ${cardId}: ${(err as Error).message}`, (err as Error).stack);
+      this.logger.error(
+        `Triagem falhou para o card ${cardId}: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
     }
   }
 
   private async processTriageForCard(cardId: string): Promise<void> {
-    const delayMs = 210_000;
-    this.logger.log(`Card ${cardId} aguardando ${delayMs / 1000}s antes de iniciar a triagem...`);
+    const delayMs = 150_000;
+    this.logger.log(
+      `Card ${cardId} aguardando ${delayMs / 1000}s antes de iniciar a triagem...`,
+    );
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     const alreadyTriaged = await this.trelloService.hasTriageComment(cardId);
     if (alreadyTriaged) {
-      this.logger.log(`Card ${cardId} já possui comentário de triagem, ignorando`);
+      this.logger.log(
+        `Card ${cardId} já possui comentário de triagem, ignorando`,
+      );
       return;
     }
 
@@ -117,7 +124,9 @@ export class TriageService {
     const card = await this.trelloService.fetchCard(cardId);
 
     const comments = await this.trelloService.fetchRecentComments(cardId, 5);
-    this.logger.log(`Card "${card.name}" — ${comments.length} comentário(s) encontrado(s)`);
+    this.logger.log(
+      `Card "${card.name}" — ${comments.length} comentário(s) encontrado(s)`,
+    );
 
     const repoPath = this.resolveRepoPath(card.labels.map((l) => l.name));
     if (!repoPath) {
@@ -128,16 +137,25 @@ export class TriageService {
     }
     this.logger.log(`Repositório selecionado: ${repoPath}`);
 
-    const { imagePaths, spreadsheetTexts, cleanup } = await this.downloadCardAttachments(cardId);
+    const { imagePaths, spreadsheetTexts, cleanup } =
+      await this.downloadCardAttachments(cardId);
 
     try {
       this.logger.log(`Iniciando análise do Claude para o card "${card.name}"`);
-      const result = await this.claudeService.runTriage(card, comments, repoPath, imagePaths, spreadsheetTexts);
+      const result = await this.claudeService.runTriage(
+        card,
+        comments,
+        repoPath,
+        imagePaths,
+        spreadsheetTexts,
+      );
 
       const commentText = this.formatTriageComment(result);
       await this.trelloService.postComment(cardId, commentText);
 
-      this.logger.log(`Triagem concluída e comentário publicado no card ${cardId}`);
+      this.logger.log(
+        `Triagem concluída e comentário publicado no card ${cardId}`,
+      );
     } finally {
       await cleanup();
     }
@@ -206,45 +224,64 @@ export class TriageService {
     spreadsheetTexts: string[];
     cleanup: () => Promise<void>;
   }> {
-    const empty = { imagePaths: [], spreadsheetTexts: [], cleanup: async () => {} };
+    const empty = {
+      imagePaths: [],
+      spreadsheetTexts: [],
+      cleanup: async () => {},
+    };
 
     let images: TrelloAttachment[];
     let spreadsheets: TrelloAttachment[];
     try {
-      ({ images, spreadsheets } = await this.trelloService.fetchAttachments(cardId));
+      ({ images, spreadsheets } =
+        await this.trelloService.fetchAttachments(cardId));
     } catch (err) {
-      this.logger.warn(`Falha ao buscar anexos do card ${cardId}: ${(err as Error).message}`);
+      this.logger.warn(
+        `Falha ao buscar anexos do card ${cardId}: ${(err as Error).message}`,
+      );
       return empty;
     }
 
-    const tmpDir = images.length > 0
-      ? await mkdtemp(join(tmpdir(), `triage-${cardId}-`))
-      : null;
+    const tmpDir =
+      images.length > 0
+        ? await mkdtemp(join(tmpdir(), `triage-${cardId}-`))
+        : null;
 
     const imagePaths: string[] = [];
     if (tmpDir) {
-      this.logger.log(`${images.length} imagem(ns) encontrada(s) no card ${cardId}`);
+      this.logger.log(
+        `${images.length} imagem(ns) encontrada(s) no card ${cardId}`,
+      );
       for (const att of images) {
         try {
-          const filePath = await this.trelloService.downloadAttachmentToDir(att, tmpDir);
+          const filePath = await this.trelloService.downloadAttachmentToDir(
+            att,
+            tmpDir,
+          );
           imagePaths.push(filePath);
           this.logger.debug(`Imagem baixada: ${att.name} → ${filePath}`);
         } catch (err) {
-          this.logger.warn(`Falha ao baixar imagem "${att.name}": ${(err as Error).message}`);
+          this.logger.warn(
+            `Falha ao baixar imagem "${att.name}": ${(err as Error).message}`,
+          );
         }
       }
     }
 
     const spreadsheetTexts: string[] = [];
     if (spreadsheets.length > 0) {
-      this.logger.log(`${spreadsheets.length} planilha(s) encontrada(s) no card ${cardId}`);
+      this.logger.log(
+        `${spreadsheets.length} planilha(s) encontrada(s) no card ${cardId}`,
+      );
       for (const att of spreadsheets) {
         try {
           const text = await this.trelloService.downloadSpreadsheetAsText(att);
           spreadsheetTexts.push(`## Planilha: ${att.name}\n\n${text}`);
           this.logger.debug(`Planilha convertida: ${att.name}`);
         } catch (err) {
-          this.logger.warn(`Falha ao converter planilha "${att.name}": ${(err as Error).message}`);
+          this.logger.warn(
+            `Falha ao converter planilha "${att.name}": ${(err as Error).message}`,
+          );
         }
       }
     }
@@ -263,7 +300,11 @@ export class TriageService {
     const raw = this.config.get<string>('REPO_LABEL_MAP', '{}');
     try {
       const parsed = JSON.parse(raw);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
         throw new Error('REPO_LABEL_MAP deve ser um objeto JSON');
       }
       return parsed as Record<string, string>;

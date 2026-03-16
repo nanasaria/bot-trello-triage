@@ -1,98 +1,150 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# bot-triagem-trello
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para a lista alvo (ex: `Pendentes Analise - Chamados`), o bot aguarda 3 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Como funciona
 
-## Description
+1. O Trello envia um evento via webhook para o bot
+2. O bot identifica se o card foi criado/movido para a lista configurada
+3. Após 3 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens e planilhas XLSX)
+4. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
+5. Posta um comentário de triagem no card com o resultado da análise
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Pré-requisitos
 
-## Project setup
+- **Node.js 18+**
+- **Claude Code CLI** instalado e autenticado (`claude --version` deve funcionar)
+- **ngrok** para expor o servidor localmente ao Trello
+- Conta no Trello com API Key, Token e OAuth Secret
+
+## Instalação do Claude Code CLI
+
+O Claude Code CLI é necessário para executar a análise de triagem no repositório local.
+
+1. Instale via npm:
+
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+2. Autentique com sua conta Anthropic:
+
+   ```bash
+   claude
+   ```
+
+   Na primeira execução, o CLI abrirá o fluxo de autenticação no navegador.
+
+3. Verifique a instalação:
+
+   ```bash
+   claude --version
+   ```
+
+4. Configure o caminho do binário no `.env` se necessário. Por padrão `CLAUDE_BIN=claude` funciona se o CLI estiver no PATH. Caso contrário, informe o caminho completo:
+
+   ```env
+   CLAUDE_BIN=/caminho/completo/para/claude
+   ```
+
+## Instalação do ngrok
+
+O ngrok é necessário para que o Trello consiga enviar webhooks para o seu servidor local.
+
+1. Acesse [ngrok.com/download](https://ngrok.com/download) e baixe a versão para seu sistema operacional
+2. Autentique o ngrok com seu token (obtenha em [dashboard.ngrok.com](https://dashboard.ngrok.com)):
+
+   ```bash
+   ngrok config add-authtoken SEU_TOKEN_AQUI
+   ```
+
+3. Inicie o túnel na porta do servidor (padrão 3000):
+
+   ```bash
+   ngrok http 3000
+   ```
+4. Copie a URL pública gerada (ex: `https://xxxx-xxxx.ngrok-free.app`) — ela será usada em `TRELLO_WEBHOOK_CALLBACK_URL`
+
+## Configuração
+
+Crie um arquivo `.env` na raiz do projeto com base no `.env.example`:
 
 ```bash
-$ npm install
+cp .env.example .env
 ```
 
-## Compile and run the project
+Preencha as variáveis no `.env`:
+
+| Variável | Descrição |
+| --- | --- |
+| `PORT` | Porta do servidor (padrão: `3000`) |
+| `TRELLO_KEY` | API Key do Trello — obtenha em [trello.com/app-key](https://trello.com/app-key) |
+| `TRELLO_TOKEN` | Token do Trello — gerado na mesma página |
+| `TRELLO_OAUTH_SECRET` | OAuth Secret da aplicação — campo "Secret" em [trello.com/app-key](https://trello.com/app-key) |
+| `TRELLO_BOARD_ID` | ID do board monitorado |
+| `TRELLO_TARGET_LIST_ID` | (Opcional) ID fixo da lista alvo. Deixe vazio para descoberta automática pelo prefixo |
+| `TRELLO_TARGET_LIST_PREFIX` | Prefixo do nome da lista alvo (ex: `Pendentes Analise - Chamados`) |
+| `TRELLO_WEBHOOK_CALLBACK_URL` | URL pública do webhook com `/trello/webhook` no final (ex: URL do ngrok) |
+| `TRELLO_SKIP_SIGNATURE` | `true` para desabilitar validação HMAC em desenvolvimento |
+| `REPO_LABEL_MAP` | JSON mapeando labels do card para caminhos de repositórios locais |
+| `DEFAULT_REPO_PATH` | Repositório padrão quando o card não tem label `repo:*` |
+| `CLAUDE_BIN` | Caminho ou nome do binário do Claude CLI (padrão: `claude`) |
+| `CLAUDE_MODEL` | Modelo do Claude a usar (ex: `sonnet`, `opus`, `claude-sonnet-4-6`) |
+| `CLAUDE_MAX_TURNS` | Número máximo de turnos do Claude (padrão: `6`) |
+
+### Obtendo credenciais do Trello
+
+1. Acesse [trello.com/app-key](https://trello.com/app-key)
+2. Copie a **API Key** → `TRELLO_KEY`
+3. Clique em "Token" para gerar o token → `TRELLO_TOKEN`
+4. O campo **Secret** na mesma página → `TRELLO_OAUTH_SECRET`
+
+### Mapeamento de repositórios por label
+
+Adicione labels no formato `repo:nome-do-repo` nos cards do Trello e configure o mapeamento:
+
+```env
+REPO_LABEL_MAP={"repo:meu-api":"/home/usuario/projetos/meu-api","repo:meu-front":"/home/usuario/projetos/meu-front"}
+```
+
+Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallback.
+
+## Instalação e execução
 
 ```bash
-# development
-$ npm run start
+# Instalar dependências
+npm install
 
-# watch mode
-$ npm run start:dev
+# Desenvolvimento (com hot reload)
+npm run start:dev
 
-# production mode
-$ npm run start:prod
+# Produção
+npm run build
+npm run start:prod
 ```
 
-## Run tests
+## Registrando o webhook no Trello
+
+Com o servidor rodando e o ngrok ativo, registre o webhook via API do Trello:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+curl -X POST "https://api.trello.com/1/webhooks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "SUA_TRELLO_KEY",
+    "token": "SEU_TRELLO_TOKEN",
+    "callbackURL": "https://sua-url.ngrok-free.app/trello/webhook",
+    "idModel": "ID_DO_SEU_BOARD",
+    "description": "Bot de triagem"
+  }'
 ```
 
-## Deployment
+## Health check
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Verifique se o bot está operacional acessando:
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```http
+GET http://localhost:3000/health
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Retorna o status da conexão com o Trello e do Claude CLI.

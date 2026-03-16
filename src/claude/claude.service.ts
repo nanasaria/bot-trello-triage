@@ -26,7 +26,6 @@ export class ClaudeService {
     );
   }
 
-  // Ponto de entrada principal: monta o prompt, executa o Claude CLI e retorna o resultado validado
   async runTriage(
     card: TrelloCard,
     comments: TrelloComment[],
@@ -41,9 +40,6 @@ export class ClaudeService {
     return this.runWithRetry(prompt, repoPath);
   }
 
-  // Executa o Claude CLI com retry exponencial.
-  // Tenta até 3 vezes com delays de 15s, 30s antes de desistir.
-  // Útil para falhas transitórias como timeout de rede ou sobrecarga do modelo.
   private async runWithRetry(
     prompt: string,
     repoPath: string,
@@ -62,7 +58,7 @@ export class ClaudeService {
         );
 
         if (attempt < maxAttempts) {
-          const delayMs = 15_000 * attempt; // 15s, 30s
+          const delayMs = 15_000 * attempt;
           this.logger.log(`Aguardando ${delayMs / 1000}s antes de retentar...`);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
@@ -74,8 +70,6 @@ export class ClaudeService {
     );
   }
 
-  // Monta o prompt enviado ao Claude.
-  // Instrui explicitamente a responder SOMENTE com JSON — sem markdown, sem texto extra.
   private buildPrompt(
     card: TrelloCard,
     comments: TrelloComment[],
@@ -130,7 +124,6 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 }`;
   }
 
-  // Formata os checklists do card para inclusão no prompt
   private formatChecklists(
     checklists: NonNullable<TrelloCard['checklists']>,
   ): string {
@@ -149,7 +142,6 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
       .join('\n\n');
   }
 
-  // Formata os comentários recentes para inclusão no prompt
   private formatComments(comments: TrelloComment[]): string {
     if (comments.length === 0) return 'Nenhum comentário recente.';
 
@@ -162,14 +154,11 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
       .join('\n\n---\n\n');
   }
 
-  // Inclui o conteúdo das planilhas convertidas para CSV no prompt.
   private formatSpreadsheets(spreadsheetTexts: string[]): string {
     if (spreadsheetTexts.length === 0) return 'Nenhuma planilha anexada.';
     return spreadsheetTexts.join('\n\n---\n\n');
   }
 
-  // Lista os caminhos locais das imagens baixadas para inclusão no prompt.
-  // Se não houver imagens, instrui o Claude a ignorar a seção.
   private formatImagePaths(imagePaths: string[]): string {
     if (imagePaths.length === 0) return 'Nenhuma imagem anexada.';
 
@@ -179,9 +168,6 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
     );
   }
 
-  // Executa o Claude CLI via spawn.
-  // O prompt é enviado via stdin para evitar problemas com argumentos longos.
-  // O processo roda com cwd = repoPath para que o Claude leia o código local.
   private spawnClaude(prompt: string, repoPath: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const args = [
@@ -196,9 +182,7 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 
       const proc = spawn(this.claudeBin, args, {
         cwd: repoPath,
-        // Herda o env do processo pai (necessário para autenticação do Claude CLI)
         env: process.env,
-        // stdin como pipe para enviar o prompt; stdout/stderr como pipe para capturar saída
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -239,15 +223,11 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
         );
       });
 
-      // Envia o prompt e fecha o stdin para sinalizar fim do input
       proc.stdin.write(prompt, 'utf8');
       proc.stdin.end();
     });
   }
 
-  // Extrai o JSON da saída do Claude e valida os campos obrigatórios.
-  // Estratégia: encontra o primeiro '{' e o último '}' para isolar o JSON
-  // mesmo que haja texto extra (defensivo contra saídas inesperadas do LLM).
   private parseAndValidate(output: string): ClaudeTriageResult {
     const start = output.indexOf('{');
     const end = output.lastIndexOf('}');
@@ -273,7 +253,6 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
     return this.validateResult(parsed);
   }
 
-  // Valida que o JSON contém os campos obrigatórios com os tipos corretos
   private validateResult(parsed: unknown): ClaudeTriageResult {
     if (typeof parsed !== 'object' || parsed === null) {
       throw new Error('Resposta do Claude não é um objeto JSON.');
@@ -281,33 +260,22 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 
     const obj = parsed as Record<string, unknown>;
 
-    if (
-      typeof obj.hipoteseInicial !== 'string' ||
-      !obj.hipoteseInicial.trim()
-    ) {
-      throw new Error(
-        'Campo "hipoteseInicial" ausente ou inválido na resposta do Claude.',
-      );
+    if (typeof obj.hipoteseInicial !== 'string' || !obj.hipoteseInicial.trim()) {
+      throw new Error('Campo "hipoteseInicial" ausente ou inválido na resposta do Claude.');
     }
 
     if (!Array.isArray(obj.arquivosCandidatos)) {
-      throw new Error(
-        'Campo "arquivosCandidatos" ausente ou não é array na resposta do Claude.',
-      );
+      throw new Error('Campo "arquivosCandidatos" ausente ou não é array na resposta do Claude.');
     }
 
     if (!Array.isArray(obj.proximosPassosSugeridos)) {
-      throw new Error(
-        'Campo "proximosPassosSugeridos" ausente ou não é array na resposta do Claude.',
-      );
+      throw new Error('Campo "proximosPassosSugeridos" ausente ou não é array na resposta do Claude.');
     }
 
     return {
       hipoteseInicial: obj.hipoteseInicial,
       arquivosCandidatos: (obj.arquivosCandidatos as unknown[]).map(String),
-      proximosPassosSugeridos: (obj.proximosPassosSugeridos as unknown[]).map(
-        String,
-      ),
+      proximosPassosSugeridos: (obj.proximosPassosSugeridos as unknown[]).map(String),
     };
   }
 }

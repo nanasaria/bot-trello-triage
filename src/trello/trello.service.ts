@@ -19,7 +19,6 @@ export class TrelloService implements OnModuleInit {
   private readonly boardId: string;
   private readonly baseUrl = 'https://api.trello.com/1';
 
-  // ID da lista alvo, resolvido na inicialização e cacheado
   private targetListId: string | null = null;
 
   constructor(private readonly config: ConfigService) {
@@ -29,27 +28,20 @@ export class TrelloService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // Resolve o ID da lista alvo na inicialização para falhar cedo caso haja problema
     try {
       this.targetListId = await this.resolveTargetListId();
       this.logger.log(`Lista alvo resolvida: ${this.targetListId}`);
     } catch (err) {
       this.logger.error('Falha ao resolver lista alvo na inicialização', err);
-      // Não derruba a aplicação — será tentado novamente no primeiro request
     }
   }
 
-  // Retorna o ID da lista alvo, resolvendo se necessário
   async getTargetListId(): Promise<string> {
     if (this.targetListId) return this.targetListId;
-
     this.targetListId = await this.resolveTargetListId();
     return this.targetListId;
   }
 
-  // Resolve o ID da lista alvo:
-  // 1. Se TRELLO_TARGET_LIST_ID estiver configurado, usa diretamente
-  // 2. Caso contrário, busca as listas do board e localiza pelo prefixo normalizado
   private async resolveTargetListId(): Promise<string> {
     const explicit = this.config.get<string>('TRELLO_TARGET_LIST_ID');
     if (explicit?.trim()) {
@@ -80,11 +72,6 @@ export class TrelloService implements OnModuleInit {
     return match.id;
   }
 
-  // Normaliza nome de lista para comparação:
-  // - remove acentos (NFD + strip combining marks)
-  // - remove sufixo numérico como " (03)"
-  // - normaliza espaços
-  // - converte para lowercase
   private normalizeName(name: string): string {
     return name
       .normalize('NFD')
@@ -95,7 +82,6 @@ export class TrelloService implements OnModuleInit {
       .toLowerCase();
   }
 
-  // Busca todas as listas abertas do board
   private async fetchBoardLists(): Promise<TrelloList[]> {
     const url = this.buildUrl(`/boards/${this.boardId}/lists`, { filter: 'open' });
     const res = await fetch(url);
@@ -103,7 +89,6 @@ export class TrelloService implements OnModuleInit {
     return res.json() as Promise<TrelloList[]>;
   }
 
-  // Busca dados completos do card, incluindo checklists
   async fetchCard(cardId: string): Promise<TrelloCard> {
     const url = this.buildUrl(`/cards/${cardId}`, {
       checklists: 'all',
@@ -114,7 +99,6 @@ export class TrelloService implements OnModuleInit {
     return res.json() as Promise<TrelloCard>;
   }
 
-  // Busca os N comentários mais recentes do card
   async fetchRecentComments(cardId: string, limit = 5): Promise<TrelloComment[]> {
     const url = this.buildUrl(`/cards/${cardId}/actions`, {
       filter: 'commentCard',
@@ -125,7 +109,6 @@ export class TrelloService implements OnModuleInit {
     return res.json() as Promise<TrelloComment[]>;
   }
 
-  // Busca todos os anexos do card uma única vez e separa em imagens e planilhas.
   async fetchAttachments(cardId: string): Promise<{
     images: TrelloAttachment[];
     spreadsheets: TrelloAttachment[];
@@ -141,8 +124,6 @@ export class TrelloService implements OnModuleInit {
     };
   }
 
-  // Detecta planilhas pelo mimeType ou pela extensão do arquivo como fallback,
-  // pois o Trello nem sempre preenche o mimeType corretamente.
   private isSpreadsheet(attachment: TrelloAttachment): boolean {
     const spreadsheetMimes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -156,9 +137,6 @@ export class TrelloService implements OnModuleInit {
     return ['.xlsx', '.xls', '.csv'].includes(ext);
   }
 
-  // Baixa um anexo do Trello para um diretório local e retorna o caminho completo do arquivo.
-  // Usa cabeçalho Authorization no formato OAuth — query params não funcionam para downloads
-  // de boards privados pois o servidor de arquivos do Trello não aceita essa forma de auth.
   async downloadAttachmentToDir(
     attachment: TrelloAttachment,
     destDir: string,
@@ -179,8 +157,6 @@ export class TrelloService implements OnModuleInit {
     return filepath;
   }
 
-  // Baixa uma planilha e converte cada aba para CSV usando SheetJS.
-  // Retorna texto pronto para incluir no prompt do Claude.
   async downloadSpreadsheetAsText(attachment: TrelloAttachment): Promise<string> {
     const res = await fetch(attachment.url, {
       headers: {
@@ -200,13 +176,11 @@ export class TrelloService implements OnModuleInit {
     return sheets.join('\n\n');
   }
 
-  // Verifica se algum comentário do card já começa com o marcador de análise automática
   async hasTriageComment(cardId: string): Promise<boolean> {
     const comments = await this.fetchRecentComments(cardId, 20);
     return comments.some((c) => c.data.text.startsWith('[Análise técnica automática]'));
   }
 
-  // Publica um comentário no card
   async postComment(cardId: string, text: string): Promise<void> {
     const url = this.buildUrl(`/cards/${cardId}/actions/comments`);
     const res = await fetch(url, {
@@ -218,7 +192,6 @@ export class TrelloService implements OnModuleInit {
     this.logger.log(`Comentário publicado no card ${cardId}`);
   }
 
-  // Monta a URL da API Trello com autenticação e parâmetros adicionais
   private buildUrl(path: string, params: Record<string, string> = {}): string {
     const url = new URL(`${this.baseUrl}${path}`);
     url.searchParams.set('key', this.key);
@@ -229,7 +202,6 @@ export class TrelloService implements OnModuleInit {
     return url.toString();
   }
 
-  // Lança erro com detalhes caso a resposta HTTP não seja 2xx
   private async assertOk(res: Response, ctx: string): Promise<void> {
     if (!res.ok) {
       const body = await res.text().catch(() => '');

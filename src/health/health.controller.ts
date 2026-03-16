@@ -34,7 +34,6 @@ export class HealthController {
     };
   }
 
-  // Verifica se as credenciais do Trello são válidas consultando o endpoint /members/me
   private async checkTrello(): Promise<{ ok: boolean; message: string }> {
     try {
       const url = `https://api.trello.com/1/members/me?key=${this.trelloKey}&token=${this.trelloToken}&fields=username`;
@@ -47,7 +46,6 @@ export class HealthController {
     }
   }
 
-  // Verifica se o binário do Claude CLI existe e responde ao --version
   private async checkClaude(): Promise<{ ok: boolean; message: string }> {
     try {
       const { stdout } = await execFileAsync(this.claudeBin, ['--version'], {

@@ -5,8 +5,6 @@ import { AppModule } from './app.module.js';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'warn', 'error', 'debug'],
-    // rawBody: true expõe req.rawBody no controller — necessário para validar
-    // a assinatura HMAC do Trello usando o body exato recebido (sem re-serializar)
     rawBody: true,
   });
 

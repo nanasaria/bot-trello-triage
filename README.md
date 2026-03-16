@@ -94,10 +94,29 @@ Preencha as variáveis no `.env`:
 
 ### Obtendo credenciais do Trello
 
+**API Key e Secret (`TRELLO_KEY` e `TRELLO_OAUTH_SECRET`)**
+
 1. Acesse [trello.com/app-key](https://trello.com/app-key)
 2. Copie a **API Key** → `TRELLO_KEY`
-3. Clique em "Token" para gerar o token → `TRELLO_TOKEN`
-4. O campo **Secret** na mesma página → `TRELLO_OAUTH_SECRET`
+3. Copie o campo **Secret** → `TRELLO_OAUTH_SECRET`
+
+**Token (`TRELLO_TOKEN`)**
+
+Acesse a URL abaixo substituindo `SUA_API_KEY` pela sua chave, autorize o acesso e copie o token gerado:
+
+```text
+https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&key=SUA_API_KEY&name=Bot%20de%20Triagem%20Tecnica
+```
+
+**ID do board (`TRELLO_BOARD_ID`)**
+
+Com a Key e o Token em mãos, liste seus boards para encontrar o ID:
+
+```bash
+curl "https://api.trello.com/1/members/me/boards?fields=name,url&key=SUA_KEY&token=SEU_TOKEN"
+```
+
+O ID é o campo `"id"` do board desejado no JSON retornado.
 
 ### Mapeamento de repositórios por label
 

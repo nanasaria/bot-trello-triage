@@ -1,0 +1,239 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { writeFile } from 'node:fs/promises';
+import { extname, join } from 'node:path';
+import * as XLSX from 'xlsx';
+import type {
+  TrelloAttachment,
+  TrelloCard,
+  TrelloComment,
+  TrelloList,
+} from './trello.types.js';
+
+@Injectable()
+export class TrelloService implements OnModuleInit {
+  private readonly logger = new Logger(TrelloService.name);
+
+  private readonly key: string;
+  private readonly token: string;
+  private readonly boardId: string;
+  private readonly baseUrl = 'https://api.trello.com/1';
+
+  // ID da lista alvo, resolvido na inicialização e cacheado
+  private targetListId: string | null = null;
+
+  constructor(private readonly config: ConfigService) {
+    this.key = this.config.getOrThrow<string>('TRELLO_KEY');
+    this.token = this.config.getOrThrow<string>('TRELLO_TOKEN');
+    this.boardId = this.config.getOrThrow<string>('TRELLO_BOARD_ID');
+  }
+
+  async onModuleInit(): Promise<void> {
+    // Resolve o ID da lista alvo na inicialização para falhar cedo caso haja problema
+    try {
+      this.targetListId = await this.resolveTargetListId();
+      this.logger.log(`Lista alvo resolvida: ${this.targetListId}`);
+    } catch (err) {
+      this.logger.error('Falha ao resolver lista alvo na inicialização', err);
+      // Não derruba a aplicação — será tentado novamente no primeiro request
+    }
+  }
+
+  // Retorna o ID da lista alvo, resolvendo se necessário
+  async getTargetListId(): Promise<string> {
+    if (this.targetListId) return this.targetListId;
+
+    this.targetListId = await this.resolveTargetListId();
+    return this.targetListId;
+  }
+
+  // Resolve o ID da lista alvo:
+  // 1. Se TRELLO_TARGET_LIST_ID estiver configurado, usa diretamente
+  // 2. Caso contrário, busca as listas do board e localiza pelo prefixo normalizado
+  private async resolveTargetListId(): Promise<string> {
+    const explicit = this.config.get<string>('TRELLO_TARGET_LIST_ID');
+    if (explicit?.trim()) {
+      this.logger.log(`Usando TRELLO_TARGET_LIST_ID explícito: ${explicit.trim()}`);
+      return explicit.trim();
+    }
+
+    const prefix = this.config.get<string>(
+      'TRELLO_TARGET_LIST_PREFIX',
+      'Pendentes Analise - Chamados',
+    );
+    const normalizedPrefix = this.normalizeName(prefix);
+    this.logger.log(`Buscando lista por prefixo normalizado: "${normalizedPrefix}"`);
+
+    const lists = await this.fetchBoardLists();
+    const match = lists.find(
+      (l) => !l.closed && this.normalizeName(l.name).startsWith(normalizedPrefix),
+    );
+
+    if (!match) {
+      throw new Error(
+        `Nenhuma lista encontrada no board com prefixo "${prefix}". ` +
+          `Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
+      );
+    }
+
+    this.logger.log(`Lista alvo encontrada: "${match.name}" (id: ${match.id})`);
+    return match.id;
+  }
+
+  // Normaliza nome de lista para comparação:
+  // - remove acentos (NFD + strip combining marks)
+  // - remove sufixo numérico como " (03)"
+  // - normaliza espaços
+  // - converte para lowercase
+  private normalizeName(name: string): string {
+    return name
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s*\(\d+\)\s*$/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  // Busca todas as listas abertas do board
+  private async fetchBoardLists(): Promise<TrelloList[]> {
+    const url = this.buildUrl(`/boards/${this.boardId}/lists`, { filter: 'open' });
+    const res = await fetch(url);
+    await this.assertOk(res, 'buscar listas do board');
+    return res.json() as Promise<TrelloList[]>;
+  }
+
+  // Busca dados completos do card, incluindo checklists
+  async fetchCard(cardId: string): Promise<TrelloCard> {
+    const url = this.buildUrl(`/cards/${cardId}`, {
+      checklists: 'all',
+      fields: 'name,desc,idList,labels',
+    });
+    const res = await fetch(url);
+    await this.assertOk(res, `buscar card ${cardId}`);
+    return res.json() as Promise<TrelloCard>;
+  }
+
+  // Busca os N comentários mais recentes do card
+  async fetchRecentComments(cardId: string, limit = 5): Promise<TrelloComment[]> {
+    const url = this.buildUrl(`/cards/${cardId}/actions`, {
+      filter: 'commentCard',
+      limit: String(limit),
+    });
+    const res = await fetch(url);
+    await this.assertOk(res, `buscar comentários do card ${cardId}`);
+    return res.json() as Promise<TrelloComment[]>;
+  }
+
+  // Busca todos os anexos do card uma única vez e separa em imagens e planilhas.
+  async fetchAttachments(cardId: string): Promise<{
+    images: TrelloAttachment[];
+    spreadsheets: TrelloAttachment[];
+  }> {
+    const url = this.buildUrl(`/cards/${cardId}/attachments`);
+    const res = await fetch(url);
+    await this.assertOk(res, `buscar anexos do card ${cardId}`);
+    const all = (await res.json()) as TrelloAttachment[];
+
+    return {
+      images: all.filter((a) => a.mimeType?.startsWith('image/')),
+      spreadsheets: all.filter((a) => this.isSpreadsheet(a)),
+    };
+  }
+
+  // Detecta planilhas pelo mimeType ou pela extensão do arquivo como fallback,
+  // pois o Trello nem sempre preenche o mimeType corretamente.
+  private isSpreadsheet(attachment: TrelloAttachment): boolean {
+    const spreadsheetMimes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+      'application/csv',
+    ];
+    if (spreadsheetMimes.includes(attachment.mimeType)) return true;
+
+    const ext = extname(attachment.name).toLowerCase();
+    return ['.xlsx', '.xls', '.csv'].includes(ext);
+  }
+
+  // Baixa um anexo do Trello para um diretório local e retorna o caminho completo do arquivo.
+  // Usa cabeçalho Authorization no formato OAuth — query params não funcionam para downloads
+  // de boards privados pois o servidor de arquivos do Trello não aceita essa forma de auth.
+  async downloadAttachmentToDir(
+    attachment: TrelloAttachment,
+    destDir: string,
+  ): Promise<string> {
+    const res = await fetch(attachment.url, {
+      headers: {
+        Authorization: `OAuth oauth_consumer_key="${this.key}", oauth_token="${this.token}"`,
+      },
+    });
+    await this.assertOk(res, `baixar anexo "${attachment.name}"`);
+
+    const buffer = await res.arrayBuffer();
+    const ext = extname(attachment.name) || '.png';
+    const filename = `${attachment.id}${ext}`;
+    const filepath = join(destDir, filename);
+
+    await writeFile(filepath, Buffer.from(buffer));
+    return filepath;
+  }
+
+  // Baixa uma planilha e converte cada aba para CSV usando SheetJS.
+  // Retorna texto pronto para incluir no prompt do Claude.
+  async downloadSpreadsheetAsText(attachment: TrelloAttachment): Promise<string> {
+    const res = await fetch(attachment.url, {
+      headers: {
+        Authorization: `OAuth oauth_consumer_key="${this.key}", oauth_token="${this.token}"`,
+      },
+    });
+    await this.assertOk(res, `baixar planilha "${attachment.name}"`);
+
+    const buffer = await res.arrayBuffer();
+    const workbook = XLSX.read(Buffer.from(buffer));
+
+    const sheets = workbook.SheetNames.map((sheetName) => {
+      const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+      return `### Aba: ${sheetName}\n${csv}`;
+    });
+
+    return sheets.join('\n\n');
+  }
+
+  // Verifica se algum comentário do card já começa com o marcador de análise automática
+  async hasTriageComment(cardId: string): Promise<boolean> {
+    const comments = await this.fetchRecentComments(cardId, 20);
+    return comments.some((c) => c.data.text.startsWith('[Análise técnica automática]'));
+  }
+
+  // Publica um comentário no card
+  async postComment(cardId: string, text: string): Promise<void> {
+    const url = this.buildUrl(`/cards/${cardId}/actions/comments`);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    await this.assertOk(res, `publicar comentário no card ${cardId}`);
+    this.logger.log(`Comentário publicado no card ${cardId}`);
+  }
+
+  // Monta a URL da API Trello com autenticação e parâmetros adicionais
+  private buildUrl(path: string, params: Record<string, string> = {}): string {
+    const url = new URL(`${this.baseUrl}${path}`);
+    url.searchParams.set('key', this.key);
+    url.searchParams.set('token', this.token);
+    for (const [k, v] of Object.entries(params)) {
+      url.searchParams.set(k, v);
+    }
+    return url.toString();
+  }
+
+  // Lança erro com detalhes caso a resposta HTTP não seja 2xx
+  private async assertOk(res: Response, ctx: string): Promise<void> {
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Trello API erro ao ${ctx}: HTTP ${res.status} — ${body}`);
+    }
+  }
+}

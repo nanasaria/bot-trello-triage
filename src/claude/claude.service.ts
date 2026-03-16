@@ -1,0 +1,313 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { spawn } from 'node:child_process';
+import type { TrelloCard, TrelloComment } from '../trello/trello.types.js';
+
+export interface ClaudeTriageResult {
+  hipoteseInicial: string;
+  arquivosCandidatos: string[];
+  proximosPassosSugeridos: string[];
+}
+
+@Injectable()
+export class ClaudeService {
+  private readonly logger = new Logger(ClaudeService.name);
+
+  private readonly claudeBin: string;
+  private readonly claudeModel: string;
+  private readonly claudeMaxTurns: number;
+
+  constructor(private readonly config: ConfigService) {
+    this.claudeBin = this.config.get<string>('CLAUDE_BIN', 'claude');
+    this.claudeModel = this.config.get<string>('CLAUDE_MODEL', 'sonnet');
+    this.claudeMaxTurns = parseInt(
+      this.config.get<string>('CLAUDE_MAX_TURNS', '6'),
+      10,
+    );
+  }
+
+  // Ponto de entrada principal: monta o prompt, executa o Claude CLI e retorna o resultado validado
+  async runTriage(
+    card: TrelloCard,
+    comments: TrelloComment[],
+    repoPath: string,
+    imagePaths: string[] = [],
+    spreadsheetTexts: string[] = [],
+  ): Promise<ClaudeTriageResult> {
+    const prompt = this.buildPrompt(card, comments, imagePaths, spreadsheetTexts);
+    this.logger.log(`Executando Claude CLI em: ${repoPath}`);
+    this.logger.debug(`Prompt montado (${prompt.length} chars)`);
+
+    return this.runWithRetry(prompt, repoPath);
+  }
+
+  // Executa o Claude CLI com retry exponencial.
+  // Tenta até 3 vezes com delays de 15s, 30s antes de desistir.
+  // Útil para falhas transitórias como timeout de rede ou sobrecarga do modelo.
+  private async runWithRetry(
+    prompt: string,
+    repoPath: string,
+    maxAttempts = 3,
+  ): Promise<ClaudeTriageResult> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const rawOutput = await this.spawnClaude(prompt, repoPath);
+        return this.parseAndValidate(rawOutput);
+      } catch (err) {
+        lastError = err as Error;
+        this.logger.warn(
+          `Claude CLI falhou (tentativa ${attempt}/${maxAttempts}): ${lastError.message}`,
+        );
+
+        if (attempt < maxAttempts) {
+          const delayMs = 15_000 * attempt; // 15s, 30s
+          this.logger.log(`Aguardando ${delayMs / 1000}s antes de retentar...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    throw new Error(
+      `Claude CLI falhou após ${maxAttempts} tentativas. Último erro: ${lastError?.message}`,
+    );
+  }
+
+  // Monta o prompt enviado ao Claude.
+  // Instrui explicitamente a responder SOMENTE com JSON — sem markdown, sem texto extra.
+  private buildPrompt(
+    card: TrelloCard,
+    comments: TrelloComment[],
+    imagePaths: string[],
+    spreadsheetTexts: string[],
+  ): string {
+    const checklistSection = this.formatChecklists(card.checklists ?? []);
+    const commentsSection = this.formatComments(comments);
+    const imagesSection = this.formatImagePaths(imagePaths);
+    const spreadsheetsSection = this.formatSpreadsheets(spreadsheetTexts);
+
+    return `Você é um engenheiro de software sênior realizando triagem técnica de chamados.
+
+Analise o chamado abaixo e o código-fonte disponível no repositório local (diretório de trabalho atual).
+Seu objetivo é levantar uma hipótese técnica inicial, identificar os arquivos mais relevantes para investigação e sugerir próximos passos.
+
+## Chamado
+
+**Título:** ${card.name}
+
+**Descrição:**
+${card.desc?.trim() || 'Sem descrição informada.'}
+
+**Checklists:**
+${checklistSection}
+
+**Comentários recentes:**
+${commentsSection}
+
+**Imagens anexadas ao card:**
+${imagesSection}
+
+**Planilhas anexadas ao card:**
+${spreadsheetsSection}
+
+## Instruções obrigatórias
+
+- NÃO proponha a solução final neste momento. Faça APENAS a triagem inicial.
+- NÃO invente certezas. Indique hipóteses baseadas no código e no chamado.
+- Se não encontrar arquivos específicos, liste os mais prováveis com base no contexto.
+- Responda em português do Brasil.
+- Sua resposta deve ser SOMENTE um JSON válido. Sem texto antes, sem texto depois, sem blocos markdown, sem explicações fora do JSON.
+
+## Formato obrigatório da resposta
+
+Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
+
+{
+  "hipoteseInicial": "descrição da hipótese técnica inicial",
+  "arquivosCandidatos": ["caminho/arquivo1.ts", "caminho/arquivo2.ts"],
+  "proximosPassosSugeridos": ["passo 1", "passo 2", "passo 3"]
+}`;
+  }
+
+  // Formata os checklists do card para inclusão no prompt
+  private formatChecklists(
+    checklists: NonNullable<TrelloCard['checklists']>,
+  ): string {
+    if (checklists.length === 0) return 'Nenhum checklist.';
+
+    return checklists
+      .map((cl) => {
+        const items = cl.checkItems
+          .map((item) => {
+            const mark = item.state === 'complete' ? '[x]' : '[ ]';
+            return `  ${mark} ${item.name}`;
+          })
+          .join('\n');
+        return `### ${cl.name}\n${items}`;
+      })
+      .join('\n\n');
+  }
+
+  // Formata os comentários recentes para inclusão no prompt
+  private formatComments(comments: TrelloComment[]): string {
+    if (comments.length === 0) return 'Nenhum comentário recente.';
+
+    return comments
+      .map((c) => {
+        const author = c.memberCreator?.fullName ?? 'Desconhecido';
+        const date = new Date(c.date).toLocaleString('pt-BR');
+        return `**${author}** (${date}):\n${c.data.text}`;
+      })
+      .join('\n\n---\n\n');
+  }
+
+  // Inclui o conteúdo das planilhas convertidas para CSV no prompt.
+  private formatSpreadsheets(spreadsheetTexts: string[]): string {
+    if (spreadsheetTexts.length === 0) return 'Nenhuma planilha anexada.';
+    return spreadsheetTexts.join('\n\n---\n\n');
+  }
+
+  // Lista os caminhos locais das imagens baixadas para inclusão no prompt.
+  // Se não houver imagens, instrui o Claude a ignorar a seção.
+  private formatImagePaths(imagePaths: string[]): string {
+    if (imagePaths.length === 0) return 'Nenhuma imagem anexada.';
+
+    return (
+      imagePaths.map((p) => `- ${p}`).join('\n') +
+      '\n\n(Leia as imagens acima para entender o contexto visual do problema)'
+    );
+  }
+
+  // Executa o Claude CLI via spawn.
+  // O prompt é enviado via stdin para evitar problemas com argumentos longos.
+  // O processo roda com cwd = repoPath para que o Claude leia o código local.
+  private spawnClaude(prompt: string, repoPath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '--print',
+        '--model',
+        this.claudeModel,
+        '--max-turns',
+        String(this.claudeMaxTurns),
+      ];
+
+      this.logger.debug(`Spawn: ${this.claudeBin} ${args.join(' ')}`);
+
+      const proc = spawn(this.claudeBin, args, {
+        cwd: repoPath,
+        // Herda o env do processo pai (necessário para autenticação do Claude CLI)
+        env: process.env,
+        // stdin como pipe para enviar o prompt; stdout/stderr como pipe para capturar saída
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8');
+      });
+
+      proc.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+
+      proc.on('close', (code) => {
+        if (stderr.trim()) {
+          this.logger.warn(`Claude CLI stderr: ${stderr.trim()}`);
+        }
+
+        if (code !== 0) {
+          reject(
+            new Error(
+              `Claude CLI encerrou com código ${code}.\nStderr: ${stderr.trim()}\nStdout: ${stdout.trim()}`,
+            ),
+          );
+          return;
+        }
+
+        resolve(stdout);
+      });
+
+      proc.on('error', (err) => {
+        reject(
+          new Error(
+            `Falha ao iniciar Claude CLI ("${this.claudeBin}"): ${err.message}. ` +
+              'Verifique se o Claude CLI está instalado e no PATH.',
+          ),
+        );
+      });
+
+      // Envia o prompt e fecha o stdin para sinalizar fim do input
+      proc.stdin.write(prompt, 'utf8');
+      proc.stdin.end();
+    });
+  }
+
+  // Extrai o JSON da saída do Claude e valida os campos obrigatórios.
+  // Estratégia: encontra o primeiro '{' e o último '}' para isolar o JSON
+  // mesmo que haja texto extra (defensivo contra saídas inesperadas do LLM).
+  private parseAndValidate(output: string): ClaudeTriageResult {
+    const start = output.indexOf('{');
+    const end = output.lastIndexOf('}');
+
+    if (start === -1 || end === -1 || start > end) {
+      throw new Error(
+        `Nenhum JSON encontrado na saída do Claude.\nSaída bruta: ${output.slice(0, 500)}`,
+      );
+    }
+
+    const jsonStr = output.slice(start, end + 1);
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (err) {
+      throw new Error(
+        `JSON inválido na saída do Claude: ${(err as Error).message}\n` +
+          `JSON extraído: ${jsonStr.slice(0, 500)}`,
+      );
+    }
+
+    return this.validateResult(parsed);
+  }
+
+  // Valida que o JSON contém os campos obrigatórios com os tipos corretos
+  private validateResult(parsed: unknown): ClaudeTriageResult {
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Resposta do Claude não é um objeto JSON.');
+    }
+
+    const obj = parsed as Record<string, unknown>;
+
+    if (
+      typeof obj.hipoteseInicial !== 'string' ||
+      !obj.hipoteseInicial.trim()
+    ) {
+      throw new Error(
+        'Campo "hipoteseInicial" ausente ou inválido na resposta do Claude.',
+      );
+    }
+
+    if (!Array.isArray(obj.arquivosCandidatos)) {
+      throw new Error(
+        'Campo "arquivosCandidatos" ausente ou não é array na resposta do Claude.',
+      );
+    }
+
+    if (!Array.isArray(obj.proximosPassosSugeridos)) {
+      throw new Error(
+        'Campo "proximosPassosSugeridos" ausente ou não é array na resposta do Claude.',
+      );
+    }
+
+    return {
+      hipoteseInicial: obj.hipoteseInicial,
+      arquivosCandidatos: (obj.arquivosCandidatos as unknown[]).map(String),
+      proximosPassosSugeridos: (obj.proximosPassosSugeridos as unknown[]).map(
+        String,
+      ),
+    };
+  }
+}

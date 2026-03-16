@@ -19,8 +19,6 @@ import type { TrelloWebhookPayload } from './trello.types.js';
 @Controller('trello')
 export class TrelloController {
   private readonly logger = new Logger(TrelloController.name);
-  // O Trello usa o OAuth Secret (não o token) para assinar os webhooks.
-  // Obtenha em: https://trello.com/app-key → campo "Secret"
   private readonly webhookSecret: string;
   private readonly callbackUrl: string;
 
@@ -32,13 +30,10 @@ export class TrelloController {
     this.callbackUrl = this.config.getOrThrow<string>('TRELLO_WEBHOOK_CALLBACK_URL');
   }
 
-  // O Trello exige que o endpoint responda 200 a um HEAD antes de registrar o webhook.
   @Head('webhook')
   @HttpCode(200)
   validateWebhook(): void {}
 
-  // Recebe eventos do Trello. Valida a assinatura HMAC usando o raw body
-  // (antes do JSON.parse), enfileira e responde 200 imediatamente.
   @Post('webhook')
   @HttpCode(200)
   receiveWebhook(
@@ -57,9 +52,6 @@ export class TrelloController {
     this.logger.debug(`ActionId ${payload.action.id} enfileirado`);
   }
 
-  // Valida a assinatura HMAC-SHA1 do Trello usando o raw body exato recebido.
-  // Fórmula: Base64( HMAC-SHA1( callbackURL + rawBody, TRELLO_OAUTH_SECRET ) )
-  // Definir TRELLO_SKIP_SIGNATURE=true no .env para desabilitar em desenvolvimento.
   private verifySignature(rawBody: Buffer | undefined, signature: string): void {
     const skip = this.config.get<string>('TRELLO_SKIP_SIGNATURE') === 'true';
     if (skip) return;

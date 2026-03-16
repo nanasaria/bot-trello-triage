@@ -8,7 +8,7 @@ async function bootstrap(): Promise<void> {
     rawBody: true,
   });
 
-  const port = process.env.PORT ?? 3000;
+  const port = process.env.PORT ?? 3080;
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');

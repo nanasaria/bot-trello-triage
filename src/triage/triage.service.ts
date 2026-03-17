@@ -132,14 +132,19 @@ export class TriageService implements OnModuleInit {
 
     this.trackActionId(actionId);
 
-    try {
-      await this.processTriageForCard(cardId);
-    } catch (err) {
-      this.processedActionIds.delete(actionId);
-      this.logger.error(
-        `Triagem falhou para o card ${cardId}: ${(err as Error).message}`,
-        (err as Error).stack,
-      );
+    if (type === 'updateCard') {
+      this.logger.log(`Card ${cardId} movido para a lista alvo — iniciando scan completo`);
+      await this.scanUntriaged();
+    } else {
+      try {
+        await this.processTriageForCard(cardId);
+      } catch (err) {
+        this.processedActionIds.delete(actionId);
+        this.logger.error(
+          `Triagem falhou para o card ${cardId}: ${(err as Error).message}`,
+          (err as Error).stack,
+        );
+      }
     }
   }
 

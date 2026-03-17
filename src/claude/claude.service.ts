@@ -173,6 +173,9 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
     return new Promise((resolve, reject) => {
       const args = [
         '--print',
+        '--output-format',
+        'text',
+        '--dangerously-skip-permissions',
         '--model',
         this.claudeModel,
         '--max-turns',

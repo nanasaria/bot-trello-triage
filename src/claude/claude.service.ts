@@ -34,8 +34,9 @@ export class ClaudeService {
     repoPath: string,
     imagePaths: string[] = [],
     spreadsheetTexts: string[] = [],
+    documentTexts: string[] = [],
   ): Promise<ClaudeTriageResult> {
-    const prompt = this.buildPrompt(card, comments, imagePaths, spreadsheetTexts);
+    const prompt = this.buildPrompt(card, comments, imagePaths, spreadsheetTexts, documentTexts);
     this.logger.log(`Executando Claude CLI em: ${repoPath}`);
     this.logger.debug(`Prompt montado (${prompt.length} chars)`);
 
@@ -76,11 +77,13 @@ export class ClaudeService {
     comments: TrelloComment[],
     imagePaths: string[],
     spreadsheetTexts: string[],
+    documentTexts: string[],
   ): string {
     const checklistSection = this.formatChecklists(card.checklists ?? []);
     const commentsSection = this.formatComments(comments);
     const imagesSection = this.formatImagePaths(imagePaths);
     const spreadsheetsSection = this.formatSpreadsheets(spreadsheetTexts);
+    const documentsSection = this.formatDocuments(documentTexts);
 
     return `Você é um engenheiro de software sênior realizando triagem técnica de chamados.
 
@@ -105,6 +108,9 @@ ${imagesSection}
 
 **Planilhas anexadas ao card:**
 ${spreadsheetsSection}
+
+**Documentos anexados ao card:**
+${documentsSection}
 
 ## Instruções obrigatórias
 
@@ -158,6 +164,11 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
   private formatSpreadsheets(spreadsheetTexts: string[]): string {
     if (spreadsheetTexts.length === 0) return 'Nenhuma planilha anexada.';
     return spreadsheetTexts.join('\n\n---\n\n');
+  }
+
+  private formatDocuments(documentTexts: string[]): string {
+    if (documentTexts.length === 0) return 'Nenhum documento anexado.';
+    return documentTexts.join('\n\n---\n\n');
   }
 
   private formatImagePaths(imagePaths: string[]): string {

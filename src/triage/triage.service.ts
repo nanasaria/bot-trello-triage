@@ -1,8 +1,12 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import { TrelloService } from '../trello/trello.service.js';
 import { ClaudeService } from '../claude/claude.service.js';
 import type { TrelloAction, TrelloAttachment } from '../trello/trello.types.js';
@@ -184,7 +188,7 @@ export class TriageService implements OnModuleInit {
     }
     this.logger.log(`Repositório selecionado: ${repoPath}`);
 
-    const { imagePaths, spreadsheetTexts, cleanup } =
+    const { imagePaths, spreadsheetTexts, documentTexts, cleanup } =
       await this.downloadCardAttachments(cardId);
 
     try {
@@ -195,6 +199,7 @@ export class TriageService implements OnModuleInit {
         repoPath,
         imagePaths,
         spreadsheetTexts,
+        documentTexts,
       );
 
       const commentText = this.formatTriageComment(result);
@@ -269,18 +274,22 @@ export class TriageService implements OnModuleInit {
   private async downloadCardAttachments(cardId: string): Promise<{
     imagePaths: string[];
     spreadsheetTexts: string[];
+    documentTexts: string[];
     cleanup: () => Promise<void>;
   }> {
     const emptyResult = {
       imagePaths: [],
       spreadsheetTexts: [],
+      documentTexts: [],
       cleanup: async () => {},
     };
 
     let images: TrelloAttachment[];
     let spreadsheets: TrelloAttachment[];
+    let documents: TrelloAttachment[];
+    let videos: TrelloAttachment[];
     try {
-      ({ images, spreadsheets } =
+      ({ images, spreadsheets, documents, videos } =
         await this.trelloService.fetchAttachments(cardId));
     } catch (err) {
       this.logger.warn(
@@ -289,13 +298,13 @@ export class TriageService implements OnModuleInit {
       return emptyResult;
     }
 
-    const tmpDir =
-      images.length > 0
-        ? await mkdtemp(join(tmpdir(), `triage-${cardId}-`))
-        : null;
+    const needsTmpDir = images.length > 0 || videos.length > 0;
+    const tmpDir = needsTmpDir
+      ? await mkdtemp(join(tmpdir(), `triage-${cardId}-`))
+      : null;
 
     const imagePaths: string[] = [];
-    if (tmpDir) {
+    if (tmpDir && images.length > 0) {
       this.logger.log(
         `${images.length} imagem(ns) encontrada(s) no card ${cardId}`,
       );
@@ -310,6 +319,27 @@ export class TriageService implements OnModuleInit {
         } catch (err) {
           this.logger.warn(
             `Falha ao baixar imagem "${att.name}": ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+
+    if (tmpDir && videos.length > 0) {
+      this.logger.log(
+        `${videos.length} vídeo(s) encontrado(s) no card ${cardId}`,
+      );
+      for (const att of videos) {
+        try {
+          const videoPath = await this.trelloService.downloadAttachmentToDir(
+            att,
+            tmpDir,
+          );
+          const frames = await this.extractVideoFrames(videoPath, tmpDir, att.name);
+          imagePaths.push(...frames);
+          this.logger.debug(`${frames.length} frame(s) extraído(s) de "${att.name}"`);
+        } catch (err) {
+          this.logger.warn(
+            `Falha ao processar vídeo "${att.name}": ${(err as Error).message}`,
           );
         }
       }
@@ -333,6 +363,24 @@ export class TriageService implements OnModuleInit {
       }
     }
 
+    const documentTexts: string[] = [];
+    if (documents.length > 0) {
+      this.logger.log(
+        `${documents.length} documento(s) encontrado(s) no card ${cardId}`,
+      );
+      for (const att of documents) {
+        try {
+          const text = await this.trelloService.downloadWordDocumentAsText(att);
+          documentTexts.push(`## Documento: ${att.name}\n\n${text}`);
+          this.logger.debug(`Documento convertido: ${att.name}`);
+        } catch (err) {
+          this.logger.warn(
+            `Falha ao converter documento "${att.name}": ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+
     const cleanup = async () => {
       if (tmpDir) {
         await rm(tmpDir, { recursive: true, force: true });
@@ -340,7 +388,35 @@ export class TriageService implements OnModuleInit {
       }
     };
 
-    return { imagePaths, spreadsheetTexts, cleanup };
+    return { imagePaths, spreadsheetTexts, documentTexts, cleanup };
+  }
+
+  private async extractVideoFrames(
+    videoPath: string,
+    destDir: string,
+    videoName: string,
+  ): Promise<string[]> {
+    const framesDir = join(destDir, `frames_${Date.now()}`);
+    await execFileAsync('mkdir', ['-p', framesDir]);
+
+    await execFileAsync('ffmpeg', [
+      '-i', videoPath,
+      '-vf', 'fps=1/10',
+      '-frames:v', '10',
+      join(framesDir, 'frame_%03d.png'),
+    ]);
+
+    const files = await readdir(framesDir);
+    const framePaths = files
+      .filter((f) => f.endsWith('.png'))
+      .sort()
+      .map((f) => join(framesDir, f));
+
+    if (framePaths.length === 0) {
+      this.logger.warn(`Nenhum frame extraído do vídeo "${videoName}"`);
+    }
+
+    return framePaths;
   }
 
   private parseRepoLabelMap(): Record<string, string> {

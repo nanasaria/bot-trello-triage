@@ -6,6 +6,8 @@ import type { TrelloAttachment } from '../../src/trello/trello.types';
 type TrelloServiceTestable = {
   normalizeName(name: string): string;
   isSpreadsheet(attachment: Pick<TrelloAttachment, 'mimeType' | 'name'>): boolean;
+  isWordDocument(attachment: Pick<TrelloAttachment, 'mimeType' | 'name'>): boolean;
+  isVideo(attachment: Pick<TrelloAttachment, 'mimeType' | 'name'>): boolean;
   buildUrl(path: string, params?: Record<string, string>): string;
   assertOk(res: Response, operation: string): Promise<void>;
   resolveTargetListId(): Promise<string>;
@@ -25,6 +27,13 @@ jest.mock('xlsx', () => ({
     sheet_to_csv: jest.fn().mockReturnValue('col1,col2\nval1,val2'),
   },
 }));
+
+jest.mock('mammoth', () => ({
+  extractRawText: jest.fn().mockResolvedValue({ value: 'conteúdo do documento', messages: [] }),
+}));
+
+import mammoth from 'mammoth';
+const mammothExtractMock = (mammoth as unknown as { extractRawText: jest.Mock }).extractRawText;
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as unknown as typeof fetch;
@@ -224,12 +233,14 @@ describe('TrelloService', () => {
   });
 
   describe('fetchAttachments', () => {
-    it('separa imagens e planilhas corretamente', async () => {
+    it('separa imagens, planilhas, documentos e vídeos corretamente', async () => {
       fetchMock.mockResolvedValue(
         mockResponse([
           { id: '1', name: 'foto.png', mimeType: 'image/png', url: 'u1', isUpload: true, bytes: 100, date: '' },
           { id: '2', name: 'dados.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', url: 'u2', isUpload: true, bytes: 200, date: '' },
           { id: '3', name: 'video.mp4', mimeType: 'video/mp4', url: 'u3', isUpload: true, bytes: 300, date: '' },
+          { id: '4', name: 'relatorio.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', url: 'u4', isUpload: true, bytes: 400, date: '' },
+          { id: '5', name: 'legado.doc', mimeType: 'application/msword', url: 'u5', isUpload: true, bytes: 500, date: '' },
         ]),
       );
       const result = await service.fetchAttachments('c1');
@@ -237,6 +248,139 @@ describe('TrelloService', () => {
       expect(result.images[0].name).toBe('foto.png');
       expect(result.spreadsheets).toHaveLength(1);
       expect(result.spreadsheets[0].name).toBe('dados.xlsx');
+      expect(result.documents).toHaveLength(2);
+      expect(result.documents.map((d) => d.name)).toEqual(['relatorio.docx', 'legado.doc']);
+      expect(result.videos).toHaveLength(1);
+      expect(result.videos[0].name).toBe('video.mp4');
+    });
+  });
+
+  describe('isWordDocument', () => {
+    it('reconhece .docx por mimeType', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          name: 'arquivo',
+        }),
+      ).toBe(true);
+    });
+
+    it('reconhece .doc por mimeType', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({
+          mimeType: 'application/msword',
+          name: 'arquivo',
+        }),
+      ).toBe(true);
+    });
+
+    it('reconhece .docx por extensão quando mimeType é vazio', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({ mimeType: '', name: 'relatorio.docx' }),
+      ).toBe(true);
+    });
+
+    it('reconhece .doc por extensão', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({ mimeType: '', name: 'contrato.doc' }),
+      ).toBe(true);
+    });
+
+    it('rejeita planilha XLSX', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: 'dados.xlsx',
+        }),
+      ).toBe(false);
+    });
+
+    it('rejeita imagem PNG', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isWordDocument({ mimeType: 'image/png', name: 'foto.png' }),
+      ).toBe(false);
+    });
+  });
+
+  describe('isVideo', () => {
+    it('reconhece video/mp4 por mimeType', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: 'video/mp4', name: 'arquivo' }),
+      ).toBe(true);
+    });
+
+    it('reconhece video/quicktime por mimeType', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: 'video/quicktime', name: 'arquivo' }),
+      ).toBe(true);
+    });
+
+    it('reconhece .mp4 por extensão quando mimeType é vazio', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: '', name: 'gravacao.mp4' }),
+      ).toBe(true);
+    });
+
+    it('reconhece .mov por extensão', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: '', name: 'tela.mov' }),
+      ).toBe(true);
+    });
+
+    it('reconhece .avi por extensão', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: '', name: 'clip.avi' }),
+      ).toBe(true);
+    });
+
+    it('rejeita imagem PNG', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: 'image/png', name: 'foto.png' }),
+      ).toBe(false);
+    });
+
+    it('rejeita documento Word', () => {
+      expect(
+        (service as unknown as TrelloServiceTestable).isVideo({ mimeType: 'application/msword', name: 'doc.doc' }),
+      ).toBe(false);
+    });
+  });
+
+  describe('downloadWordDocumentAsText', () => {
+    const attachment: TrelloAttachment = {
+      id: 'att-1',
+      name: 'relatorio.docx',
+      url: 'https://trello.com/1/cards/c1/attachments/att-1/download/relatorio.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      isUpload: true,
+      bytes: 1024,
+      date: '',
+    };
+
+    it('retorna texto extraído do documento', async () => {
+      fetchMock.mockResolvedValue(mockResponse(new ArrayBuffer(8)));
+      mammothExtractMock.mockResolvedValue({ value: 'conteúdo do documento', messages: [] });
+
+      const text = await service.downloadWordDocumentAsText(attachment);
+
+      expect(text).toBe('conteúdo do documento');
+      expect(mammothExtractMock).toHaveBeenCalledWith({ buffer: expect.any(Buffer) });
+    });
+
+    it('lança erro quando download falha', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 403, text: jest.fn().mockResolvedValue('Forbidden') } as unknown as Response);
+
+      await expect(service.downloadWordDocumentAsText(attachment)).rejects.toThrow('HTTP 403');
+    });
+
+    it('usa header de autorização OAuth no download', async () => {
+      fetchMock.mockResolvedValue(mockResponse(new ArrayBuffer(8)));
+      mammothExtractMock.mockResolvedValue({ value: 'texto', messages: [] });
+
+      await service.downloadWordDocumentAsText(attachment);
+
+      const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((options.headers as Record<string, string>)['Authorization']).toContain('oauth_consumer_key');
     });
   });
 

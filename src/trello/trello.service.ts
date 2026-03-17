@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import * as XLSX from 'xlsx';
+import mammoth from 'mammoth';
 import type {
   TrelloAttachment,
   TrelloCard,
@@ -121,6 +122,8 @@ export class TrelloService implements OnModuleInit {
   async fetchAttachments(cardId: string): Promise<{
     images: TrelloAttachment[];
     spreadsheets: TrelloAttachment[];
+    documents: TrelloAttachment[];
+    videos: TrelloAttachment[];
   }> {
     const url = this.buildUrl(`/cards/${cardId}/attachments`);
     const res = await fetch(url);
@@ -130,6 +133,8 @@ export class TrelloService implements OnModuleInit {
     return {
       images: attachments.filter((a) => a.mimeType?.startsWith('image/')),
       spreadsheets: attachments.filter((a) => this.isSpreadsheet(a)),
+      documents: attachments.filter((a) => this.isWordDocument(a)),
+      videos: attachments.filter((a) => this.isVideo(a)),
     };
   }
 
@@ -144,6 +149,24 @@ export class TrelloService implements OnModuleInit {
 
     const ext = extname(attachment.name).toLowerCase();
     return ['.xlsx', '.xls', '.csv'].includes(ext);
+  }
+
+  private isWordDocument(attachment: TrelloAttachment): boolean {
+    const wordMimes = [
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+    ];
+    if (wordMimes.includes(attachment.mimeType)) return true;
+
+    const ext = extname(attachment.name).toLowerCase();
+    return ['.docx', '.doc'].includes(ext);
+  }
+
+  private isVideo(attachment: TrelloAttachment): boolean {
+    if (attachment.mimeType?.startsWith('video/')) return true;
+
+    const ext = extname(attachment.name).toLowerCase();
+    return ['.mp4', '.mov', '.avi', '.mkv', '.webm'].includes(ext);
   }
 
   async downloadAttachmentToDir(
@@ -183,6 +206,19 @@ export class TrelloService implements OnModuleInit {
     });
 
     return sheets.join('\n\n');
+  }
+
+  async downloadWordDocumentAsText(attachment: TrelloAttachment): Promise<string> {
+    const res = await fetch(attachment.url, {
+      headers: {
+        Authorization: `OAuth oauth_consumer_key="${this.key}", oauth_token="${this.token}"`,
+      },
+    });
+    await this.assertOk(res, `baixar documento "${attachment.name}"`);
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value;
   }
 
   async hasTriageComment(cardId: string): Promise<boolean> {

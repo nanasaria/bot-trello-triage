@@ -30,7 +30,7 @@ export class TriageService implements OnModuleInit {
     this.defaultRepoPath = this.config.get<string>('DEFAULT_REPO_PATH', '');
   }
 
-  async onModuleInit(): Promise<void> {
+  onModuleInit(): void {
     const enabled =
       this.config.get<string>('STARTUP_SCAN', 'true') !== 'false';
     if (!enabled) {

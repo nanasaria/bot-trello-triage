@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { ClaudeService } from '../claude/claude.service.js';
 import type { TrelloAction, TrelloAttachment } from '../trello/trello.types.js';
 
 @Injectable()
-export class TriageService {
+export class TriageService implements OnModuleInit {
   private readonly logger = new Logger(TriageService.name);
 
   private readonly processedActionIds = new Map<string, true>();
@@ -30,9 +30,46 @@ export class TriageService {
     this.defaultRepoPath = this.config.get<string>('DEFAULT_REPO_PATH', '');
   }
 
+  async onModuleInit(): Promise<void> {
+    const enabled =
+      this.config.get<string>('STARTUP_SCAN', 'true') !== 'false';
+    if (!enabled) {
+      this.logger.log('Scan inicial desabilitado (STARTUP_SCAN=false)');
+      return;
+    }
+    void this.scanUntriaged();
+  }
+
   enqueue(action: TrelloAction): void {
     this.jobQueue.push(action);
     this.drainQueue();
+  }
+
+  private async scanUntriaged(): Promise<void> {
+    try {
+      const listId = await this.trelloService.getTargetListId();
+      const cards = await this.trelloService.fetchCardsInList(listId);
+      this.logger.log(
+        `Scan inicial: ${cards.length} card(s) encontrado(s) na lista alvo`,
+      );
+      for (const card of cards) {
+        const alreadyTriaged = await this.trelloService.hasTriageComment(
+          card.id,
+        );
+        if (!alreadyTriaged) {
+          this.logger.log(
+            `Scan inicial: card sem triagem — ${card.id} "${card.name}"`,
+          );
+          await this.processTriageForCard(card.id, { skipDelay: true });
+        }
+      }
+      this.logger.log('Scan inicial concluído');
+    } catch (err) {
+      this.logger.error(
+        `Scan inicial falhou: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
+    }
   }
 
   private drainQueue(): void {
@@ -106,11 +143,16 @@ export class TriageService {
     }
   }
 
-  private async processTriageForCard(cardId: string): Promise<void> {
-    this.logger.log(
-      `Card ${cardId} aguardando ${this.TRIAGE_DELAY_MS / 1000}s antes de iniciar a triagem...`,
-    );
-    await new Promise((resolve) => setTimeout(resolve, this.TRIAGE_DELAY_MS));
+  private async processTriageForCard(
+    cardId: string,
+    opts: { skipDelay?: boolean } = {},
+  ): Promise<void> {
+    if (!opts.skipDelay) {
+      this.logger.log(
+        `Card ${cardId} aguardando ${this.TRIAGE_DELAY_MS / 1000}s antes de iniciar a triagem...`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, this.TRIAGE_DELAY_MS));
+    }
 
     const alreadyTriaged = await this.trelloService.hasTriageComment(cardId);
     if (alreadyTriaged) {

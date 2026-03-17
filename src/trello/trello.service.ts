@@ -89,6 +89,15 @@ export class TrelloService implements OnModuleInit {
     return res.json() as Promise<TrelloList[]>;
   }
 
+  async fetchCardsInList(listId: string): Promise<TrelloCard[]> {
+    const url = this.buildUrl(`/lists/${listId}/cards`, {
+      fields: 'id,name,desc,idList,labels',
+    });
+    const res = await fetch(url);
+    await this.assertOk(res, `buscar cards da lista ${listId}`);
+    return res.json() as Promise<TrelloCard[]>;
+  }
+
   async fetchCard(cardId: string): Promise<TrelloCard> {
     const url = this.buildUrl(`/cards/${cardId}`, {
       checklists: 'all',

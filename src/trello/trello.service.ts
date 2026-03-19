@@ -35,6 +35,8 @@ export class TrelloService implements OnModuleInit {
     } catch (err) {
       this.logger.error('Falha ao resolver lista alvo na inicialização', err);
     }
+
+    await this.ensureWebhookRegistered();
   }
 
   async getTargetListId(): Promise<string> {
@@ -235,6 +237,45 @@ export class TrelloService implements OnModuleInit {
     });
     await this.assertOk(res, `publicar comentário no card ${cardId}`);
     this.logger.log(`Comentário publicado no card ${cardId}`);
+  }
+
+  private async ensureWebhookRegistered(): Promise<void> {
+    const callbackUrl = this.config.get<string>('TRELLO_WEBHOOK_CALLBACK_URL', '');
+    if (!callbackUrl) {
+      this.logger.warn('TRELLO_WEBHOOK_CALLBACK_URL não configurado — webhook não será registrado');
+      return;
+    }
+
+    try {
+      const listUrl = `${this.baseUrl}/tokens/${this.token}/webhooks?key=${this.key}&token=${this.token}`;
+      const listRes = await fetch(listUrl);
+      await this.assertOk(listRes, 'listar webhooks do token');
+      const webhooks = (await listRes.json()) as Array<{ callbackURL: string; idModel: string; active: boolean }>;
+
+      const alreadyRegistered = webhooks.some(
+        (w) => w.callbackURL === callbackUrl && w.idModel === this.boardId,
+      );
+
+      if (alreadyRegistered) {
+        this.logger.log('Webhook já registrado no Trello');
+        return;
+      }
+
+      const createUrl = `${this.baseUrl}/webhooks?key=${this.key}&token=${this.token}`;
+      const createRes = await fetch(createUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callbackURL: callbackUrl,
+          idModel: this.boardId,
+          description: 'bot-triagem-trello',
+        }),
+      });
+      await this.assertOk(createRes, 'registrar webhook');
+      this.logger.log(`Webhook registrado com sucesso: ${callbackUrl}`);
+    } catch (err) {
+      this.logger.error(`Falha ao registrar webhook: ${(err as Error).message}`);
+    }
   }
 
   private buildUrl(path: string, params: Record<string, string> = {}): string {

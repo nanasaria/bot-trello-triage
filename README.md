@@ -14,6 +14,7 @@ Bot de triagem técnica automática para cards do Trello. Quando um card é cria
 
 - **Node.js 18+**
 - **Claude Code CLI** instalado e autenticado (`claude --version` deve funcionar)
+- **ffmpeg** instalado no sistema (necessário para processar vídeos anexados aos cards)
 - **ngrok** para expor o servidor localmente ao Trello
 - Conta no Trello com API Key, Token e OAuth Secret
 
@@ -63,6 +64,7 @@ O ngrok é necessário para que o Trello consiga enviar webhooks para o seu serv
    ```bash
    ngrok http 3080
    ```
+
 4. Copie a URL pública gerada (ex: `https://xxxx-xxxx.ngrok-free.app`) — ela será usada em `TRELLO_WEBHOOK_CALLBACK_URL`
 
 ## Configuração

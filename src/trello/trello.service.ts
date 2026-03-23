@@ -20,7 +20,7 @@ export class TrelloService implements OnModuleInit {
   private readonly boardId: string;
   private readonly baseUrl = 'https://api.trello.com/1';
 
-  private targetListId: string | null = null;
+  private targetListIds: string[] = [];
 
   constructor(private readonly config: ConfigService) {
     this.key = this.config.getOrThrow<string>('TRELLO_KEY');
@@ -30,49 +30,64 @@ export class TrelloService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     try {
-      this.targetListId = await this.resolveTargetListId();
-      this.logger.log(`Lista alvo resolvida: ${this.targetListId}`);
+      this.targetListIds = await this.resolveTargetListIds();
+      this.logger.log(`Listas alvo resolvidas: ${this.targetListIds.join(', ')}`);
     } catch (err) {
-      this.logger.error('Falha ao resolver lista alvo na inicialização', err);
+      this.logger.error('Falha ao resolver listas alvo na inicialização', err);
     }
 
     await this.ensureWebhookRegistered();
   }
 
-  async getTargetListId(): Promise<string> {
-    if (this.targetListId) return this.targetListId;
-    this.targetListId = await this.resolveTargetListId();
-    return this.targetListId;
+  async getTargetListIds(): Promise<string[]> {
+    if (this.targetListIds.length > 0) return this.targetListIds;
+    this.targetListIds = await this.resolveTargetListIds();
+    return this.targetListIds;
   }
 
-  private async resolveTargetListId(): Promise<string> {
+  private async resolveTargetListIds(): Promise<string[]> {
     const explicit = this.config.get<string>('TRELLO_TARGET_LIST_ID');
     if (explicit?.trim()) {
       this.logger.log(`Usando TRELLO_TARGET_LIST_ID explícito: ${explicit.trim()}`);
-      return explicit.trim();
+      return [explicit.trim()];
     }
 
-    const prefix = this.config.get<string>(
-      'TRELLO_TARGET_LIST_PREFIX',
-      'Pendentes Analise - Chamados',
-    );
-    const normalizedPrefix = this.normalizeName(prefix);
-    this.logger.log(`Buscando lista por prefixo normalizado: "${normalizedPrefix}"`);
+    const prefixesRaw =
+      this.config.get<string>('TRELLO_TARGET_LIST_PREFIXES', '') ||
+      this.config.get<string>('TRELLO_TARGET_LIST_PREFIX', 'Pendentes Analise - Chamados');
+
+    const prefixes = prefixesRaw
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
 
     const lists = await this.fetchBoardLists();
-    const match = lists.find(
-      (l) => !l.closed && this.normalizeName(l.name).startsWith(normalizedPrefix),
-    );
+    const ids: string[] = [];
 
-    if (!match) {
+    for (const prefix of prefixes) {
+      const normalizedPrefix = this.normalizeName(prefix);
+      this.logger.log(`Buscando lista por prefixo normalizado: "${normalizedPrefix}"`);
+      const match = lists.find(
+        (l) => !l.closed && this.normalizeName(l.name).startsWith(normalizedPrefix),
+      );
+      if (match) {
+        this.logger.log(`Lista alvo encontrada: "${match.name}" (id: ${match.id})`);
+        ids.push(match.id);
+      } else {
+        this.logger.warn(
+          `Nenhuma lista encontrada com prefixo "${prefix}". ` +
+            `Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
+        );
+      }
+    }
+
+    if (ids.length === 0) {
       throw new Error(
-        `Nenhuma lista encontrada no board com prefixo "${prefix}". ` +
-          `Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
+        `Nenhuma lista alvo encontrada. Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
       );
     }
 
-    this.logger.log(`Lista alvo encontrada: "${match.name}" (id: ${match.id})`);
-    return match.id;
+    return ids;
   }
 
   private normalizeName(name: string): string {

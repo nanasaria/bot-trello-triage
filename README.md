@@ -84,8 +84,8 @@ Preencha as variáveis no `.env`:
 | `TRELLO_TOKEN` | Token do Trello — gerado na mesma página |
 | `TRELLO_OAUTH_SECRET` | OAuth Secret da aplicação — campo "Secret" em [trello.com/app-key](https://trello.com/app-key) |
 | `TRELLO_BOARD_ID` | ID do board monitorado |
-| `TRELLO_TARGET_LIST_ID` | (Opcional) ID fixo da lista alvo. Deixe vazio para descoberta automática pelo prefixo |
-| `TRELLO_TARGET_LIST_PREFIX` | Prefixo do nome da lista alvo (ex: `Pendentes Analise - Chamados`) |
+| `TRELLO_TARGET_LIST_ID` | (Opcional) ID fixo de uma única lista alvo. Deixe vazio para descoberta automática pelos prefixos |
+| `TRELLO_TARGET_LIST_PREFIXES` | Prefixos das listas alvo separados por vírgula (ex: `Pendentes Analise - Chamados,Lotes`). O sufixo numérico como `(03)` é ignorado automaticamente |
 | `TRELLO_WEBHOOK_CALLBACK_URL` | URL pública do webhook com `/trello/webhook` no final (ex: URL do ngrok) |
 | `TRELLO_SKIP_SIGNATURE` | `true` para desabilitar validação HMAC em desenvolvimento |
 | `REPO_LABEL_MAP` | JSON mapeando labels do card para caminhos de repositórios locais |

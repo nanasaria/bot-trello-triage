@@ -17,6 +17,7 @@ export class TriageService implements OnModuleInit {
 
   private readonly processedActionIds = new Map<string, true>();
   private readonly PROCESSED_IDS_MAX = 1000;
+  private readonly processedCardIds = new Set<string>();
   private readonly TRIAGE_DELAY_MS = 150_000;
 
   private readonly jobQueue: TrelloAction[] = [];
@@ -51,26 +52,32 @@ export class TriageService implements OnModuleInit {
 
   private async scanUntriaged(): Promise<void> {
     try {
-      const listId = await this.trelloService.getTargetListId();
-      const cards = await this.trelloService.fetchCardsInList(listId);
-      this.logger.log(
-        `Scan inicial: ${cards.length} card(s) encontrado(s) na lista alvo`,
-      );
-      for (const card of cards) {
-        const alreadyTriaged = await this.trelloService.hasTriageComment(
-          card.id,
+      const listIds = await this.trelloService.getTargetListIds();
+      for (const listId of listIds) {
+        const cards = await this.trelloService.fetchCardsInList(listId);
+        this.logger.log(
+          `Scan: ${cards.length} card(s) encontrado(s) na lista ${listId}`,
         );
-        if (!alreadyTriaged) {
-          this.logger.log(
-            `Scan inicial: card sem triagem — ${card.id} "${card.name}"`,
-          );
-          await this.processTriageForCard(card.id, { skipDelay: true });
+        for (const card of cards) {
+          if (this.processedCardIds.has(card.id)) {
+            this.logger.debug(`Card ${card.id} já triado nesta sessão, ignorando`);
+            continue;
+          }
+          const alreadyTriaged = await this.trelloService.hasTriageComment(card.id);
+          if (alreadyTriaged) {
+            this.processedCardIds.add(card.id);
+          } else {
+            this.logger.log(
+              `Scan: card sem triagem — ${card.id} "${card.name}"`,
+            );
+            await this.processTriageForCard(card.id, { skipDelay: true });
+          }
         }
       }
-      this.logger.log('Scan inicial concluído');
+      this.logger.log('Scan concluído');
     } catch (err) {
       this.logger.error(
-        `Scan inicial falhou: ${(err as Error).message}`,
+        `Scan falhou: ${(err as Error).message}`,
         (err as Error).stack,
       );
     }
@@ -115,17 +122,17 @@ export class TriageService implements OnModuleInit {
       return;
     }
 
-    let targetListId: string;
+    let targetListIds: string[];
     try {
-      targetListId = await this.trelloService.getTargetListId();
+      targetListIds = await this.trelloService.getTargetListIds();
     } catch (err) {
-      this.logger.error('Não foi possível resolver a lista alvo', err);
+      this.logger.error('Não foi possível resolver as listas alvo', err);
       return;
     }
 
-    if (triggeredListId !== targetListId) {
+    if (!targetListIds.includes(triggeredListId)) {
       this.logger.debug(
-        `Ação ${type} na lista ${triggeredListId} ignorada (alvo: ${targetListId})`,
+        `Ação ${type} na lista ${triggeredListId} ignorada (alvos: ${targetListIds.join(', ')})`,
       );
       return;
     }
@@ -156,6 +163,11 @@ export class TriageService implements OnModuleInit {
     cardId: string,
     opts: { skipDelay?: boolean } = {},
   ): Promise<void> {
+    if (this.processedCardIds.has(cardId)) {
+      this.logger.log(`Card ${cardId} já triado nesta sessão, ignorando`);
+      return;
+    }
+
     if (!opts.skipDelay) {
       this.logger.log(
         `Card ${cardId} aguardando ${this.TRIAGE_DELAY_MS / 1000}s antes de iniciar a triagem...`,
@@ -168,6 +180,7 @@ export class TriageService implements OnModuleInit {
       this.logger.log(
         `Card ${cardId} já possui comentário de triagem, ignorando`,
       );
+      this.processedCardIds.add(cardId);
       return;
     }
 
@@ -204,6 +217,7 @@ export class TriageService implements OnModuleInit {
 
       const commentText = this.formatTriageComment(result);
       await this.trelloService.postComment(cardId, commentText);
+      this.processedCardIds.add(cardId);
 
       this.logger.log(
         `Triagem concluída e comentário publicado no card ${cardId}`,

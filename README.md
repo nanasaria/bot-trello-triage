@@ -136,7 +136,10 @@ Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallbac
 # Instalar dependências
 npm install
 
-# Desenvolvimento (com hot reload)
+# Desenvolvimento com ngrok (sobe o servidor e o túnel simultaneamente)
+npm run start:project
+
+# Desenvolvimento apenas (sem ngrok)
 npm run start:dev
 
 # Produção

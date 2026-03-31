@@ -14,6 +14,7 @@ export class ClaudeService {
   private readonly logger = new Logger(ClaudeService.name);
 
   private readonly MAX_RETRY_ATTEMPTS = 3;
+  private readonly MAX_ATTACHMENT_CHARS = 80_000;
 
   private readonly claudeBin: string;
   private readonly claudeModel: string;
@@ -163,12 +164,20 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 
   private formatSpreadsheets(spreadsheetTexts: string[]): string {
     if (spreadsheetTexts.length === 0) return 'Nenhuma planilha anexada.';
-    return spreadsheetTexts.join('\n\n---\n\n');
+    return spreadsheetTexts.map((t) => this.truncateAttachment(t)).join('\n\n---\n\n');
   }
 
   private formatDocuments(documentTexts: string[]): string {
     if (documentTexts.length === 0) return 'Nenhum documento anexado.';
-    return documentTexts.join('\n\n---\n\n');
+    return documentTexts.map((t) => this.truncateAttachment(t)).join('\n\n---\n\n');
+  }
+
+  private truncateAttachment(text: string): string {
+    if (text.length <= this.MAX_ATTACHMENT_CHARS) return text;
+    return (
+      text.slice(0, this.MAX_ATTACHMENT_CHARS) +
+      `\n\n[... truncado: ${text.length - this.MAX_ATTACHMENT_CHARS} caracteres omitidos ...]`
+    );
   }
 
   private formatImagePaths(imagePaths: string[]): string {
@@ -192,8 +201,6 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
         '--max-turns',
         String(this.claudeMaxTurns),
       ];
-
-      this.logger.debug(`Spawn: ${this.claudeBin} ${args.join(' ')}`);
 
       const proc = spawn(this.claudeBin, args, {
         cwd: repoPath,

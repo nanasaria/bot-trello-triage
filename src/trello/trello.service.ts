@@ -66,7 +66,6 @@ export class TrelloService implements OnModuleInit {
 
     for (const prefix of prefixes) {
       const normalizedPrefix = this.normalizeName(prefix);
-      this.logger.log(`Buscando lista por prefixo normalizado: "${normalizedPrefix}"`);
       const match = lists.find(
         (l) => !l.closed && this.normalizeName(l.name).startsWith(normalizedPrefix),
       );

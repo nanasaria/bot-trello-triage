@@ -110,6 +110,10 @@ export class TriageService implements OnModuleInit {
   private async handleAction(action: TrelloAction): Promise<void> {
     const { id: actionId, type } = action;
 
+    this.logger.debug(
+      `Ação recebida: type=${type} cardId=${action.data.card?.id} listId=${action.data.list?.id ?? action.data.listAfter?.id ?? 'n/a'}`,
+    );
+
     if (this.processedActionIds.has(actionId)) {
       this.logger.debug(`ActionId ${actionId} já processado, ignorando`);
       return;
@@ -184,13 +188,8 @@ export class TriageService implements OnModuleInit {
       return;
     }
 
-    this.logger.log(`Buscando dados do card ${cardId}`);
     const card = await this.trelloService.fetchCard(cardId);
-
     const comments = await this.trelloService.fetchRecentComments(cardId, 5);
-    this.logger.log(
-      `Card "${card.name}" — ${comments.length} comentário(s) encontrado(s)`,
-    );
 
     const repoPath = this.resolveRepoPath(card.labels.map((l) => l.name));
     if (!repoPath) {
@@ -228,15 +227,18 @@ export class TriageService implements OnModuleInit {
   }
 
   private extractTargetListId(action: TrelloAction): string | null {
-    if (action.type === 'createCard') {
-      return action.data.list?.id ?? null;
-    }
+    switch (action.type) {
+      case 'createCard':
+      case 'copyCard':
+      case 'moveCardToBoard':
+        return action.data.list?.id ?? null;
 
-    if (action.type === 'updateCard' && action.data.listAfter) {
-      return action.data.listAfter.id;
-    }
+      case 'updateCard':
+        return action.data.listAfter?.id ?? null;
 
-    return null;
+      default:
+        return null;
+    }
   }
 
   private trackActionId(actionId: string): void {
@@ -319,9 +321,6 @@ export class TriageService implements OnModuleInit {
 
     const imagePaths: string[] = [];
     if (tmpDir && images.length > 0) {
-      this.logger.log(
-        `${images.length} imagem(ns) encontrada(s) no card ${cardId}`,
-      );
       for (const att of images) {
         try {
           const filePath = await this.trelloService.downloadAttachmentToDir(
@@ -339,9 +338,6 @@ export class TriageService implements OnModuleInit {
     }
 
     if (tmpDir && videos.length > 0) {
-      this.logger.log(
-        `${videos.length} vídeo(s) encontrado(s) no card ${cardId}`,
-      );
       for (const att of videos) {
         try {
           const videoPath = await this.trelloService.downloadAttachmentToDir(
@@ -361,9 +357,6 @@ export class TriageService implements OnModuleInit {
 
     const spreadsheetTexts: string[] = [];
     if (spreadsheets.length > 0) {
-      this.logger.log(
-        `${spreadsheets.length} planilha(s) encontrada(s) no card ${cardId}`,
-      );
       for (const att of spreadsheets) {
         try {
           const text = await this.trelloService.downloadSpreadsheetAsText(att);
@@ -379,9 +372,6 @@ export class TriageService implements OnModuleInit {
 
     const documentTexts: string[] = [];
     if (documents.length > 0) {
-      this.logger.log(
-        `${documents.length} documento(s) encontrado(s) no card ${cardId}`,
-      );
       for (const att of documents) {
         try {
           const text = await this.trelloService.downloadWordDocumentAsText(att);

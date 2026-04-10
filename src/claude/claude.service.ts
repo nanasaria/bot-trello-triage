@@ -24,7 +24,7 @@ export class ClaudeService {
     this.claudeBin = this.config.get<string>('CLAUDE_BIN', 'claude');
     this.claudeModel = this.config.get<string>('CLAUDE_MODEL', 'sonnet');
     this.claudeMaxTurns = parseInt(
-      this.config.get<string>('CLAUDE_MAX_TURNS', '6'),
+      this.config.get<string>('CLAUDE_MAX_TURNS', '30'),
       10,
     );
   }

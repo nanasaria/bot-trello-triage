@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import type { TrelloCard, TrelloComment } from '../trello/trello.types.js';
 
 export interface ClaudeTriageResult {
@@ -19,6 +21,11 @@ export class ClaudeService {
   private readonly claudeBin: string;
   private readonly claudeModel: string;
   private readonly claudeMaxTurns: number;
+  private readonly openAiApiKey: string;
+  private readonly openAiModel: string;
+  private readonly openAiApiBaseUrl: string;
+  private readonly openAiOrganization: string;
+  private readonly openAiProject: string;
 
   constructor(private readonly config: ConfigService) {
     this.claudeBin = this.config.get<string>('CLAUDE_BIN', 'claude');
@@ -27,6 +34,15 @@ export class ClaudeService {
       this.config.get<string>('CLAUDE_MAX_TURNS', '30'),
       10,
     );
+    this.openAiApiKey = this.config.get<string>('OPENAI_API_KEY', '').trim();
+    this.openAiModel = this.config.get<string>('OPENAI_MODEL', 'gpt-5.1');
+    this.openAiApiBaseUrl = this.config
+      .get<string>('OPENAI_API_BASE_URL', 'https://api.openai.com/v1')
+      .replace(/\/$/, '');
+    this.openAiOrganization = this.config
+      .get<string>('OPENAI_ORGANIZATION', '')
+      .trim();
+    this.openAiProject = this.config.get<string>('OPENAI_PROJECT', '').trim();
   }
 
   async runTriage(
@@ -47,12 +63,13 @@ export class ClaudeService {
     this.logger.log(`Executando Claude CLI em: ${repoPath}`);
     this.logger.debug(`Prompt montado (${prompt.length} chars)`);
 
-    return this.runWithRetry(prompt, repoPath);
+    return this.runWithRetry(prompt, repoPath, imagePaths);
   }
 
   private async runWithRetry(
     prompt: string,
     repoPath: string,
+    imagePaths: string[],
   ): Promise<ClaudeTriageResult> {
     let lastError: Error | undefined;
 
@@ -62,6 +79,21 @@ export class ClaudeService {
         return this.parseAndValidate(rawOutput);
       } catch (err) {
         lastError = err as Error;
+
+        if (this.shouldFallbackToOpenAi(lastError)) {
+          if (!this.openAiApiKey) {
+            throw new Error(
+              'Claude CLI atingiu o limite de uso e o fallback para OpenAI não está configurado. ' +
+                'Defina OPENAI_API_KEY para habilitar o uso automático do ChatGPT.',
+            );
+          }
+
+          this.logger.warn(
+            `Claude CLI atingiu o limite de uso. Acionando fallback para OpenAI (${this.openAiModel}).`,
+          );
+          return this.runWithOpenAi(prompt, imagePaths);
+        }
+
         this.logger.warn(
           `Claude CLI falhou (tentativa ${attempt}/${this.MAX_RETRY_ATTEMPTS}): ${lastError.message}`,
         );
@@ -77,6 +109,172 @@ export class ClaudeService {
     throw new Error(
       `Claude CLI falhou após ${this.MAX_RETRY_ATTEMPTS} tentativas. Último erro: ${lastError?.message}`,
     );
+  }
+
+  private shouldFallbackToOpenAi(error: Error): boolean {
+    const message = error.message.toLowerCase();
+
+    return (
+      message.includes("you've hit your limit") ||
+      message.includes('you have hit your limit') ||
+      message.includes('hit your limit') ||
+      message.includes('usage limit')
+    );
+  }
+
+  private async runWithOpenAi(
+    prompt: string,
+    imagePaths: string[],
+  ): Promise<ClaudeTriageResult> {
+    const imageInputs = await this.buildOpenAiImageInputs(imagePaths);
+    const url = `${this.openAiApiBaseUrl}/responses`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.openAiApiKey}`,
+    };
+
+    if (this.openAiOrganization) {
+      headers['OpenAI-Organization'] = this.openAiOrganization;
+    }
+
+    if (this.openAiProject) {
+      headers['OpenAI-Project'] = this.openAiProject;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: this.openAiModel,
+        store: false,
+        input: [
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text: prompt }, ...imageInputs],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'triage_result',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                hipoteseInicial: { type: 'string' },
+                arquivosCandidatos: {
+                  type: 'array',
+                  items: { type: 'string' },
+                },
+                proximosPassosSugeridos: {
+                  type: 'array',
+                  items: { type: 'string' },
+                },
+              },
+              required: [
+                'hipoteseInicial',
+                'arquivosCandidatos',
+                'proximosPassosSugeridos',
+              ],
+            },
+          },
+        },
+      }),
+    });
+
+    const responseBody = (await response.json().catch(() => null)) as {
+      output_text?: string;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+      error?: { message?: string };
+    } | null;
+
+    if (!response.ok) {
+      throw new Error(
+        `OpenAI API erro no fallback: HTTP ${response.status} — ` +
+          `${responseBody?.error?.message ?? 'sem detalhes'}`,
+      );
+    }
+
+    const outputText = this.extractOpenAiOutputText(responseBody);
+    return this.parseAndValidate(outputText);
+  }
+
+  private async buildOpenAiImageInputs(
+    imagePaths: string[],
+  ): Promise<
+    Array<{ type: 'input_image'; image_url: string; detail: 'auto' }>
+  > {
+    const results = await Promise.all(
+      imagePaths.map(async (imagePath) => {
+        try {
+          const buffer = await readFile(imagePath);
+          const mimeType = this.getImageMimeType(imagePath);
+          return {
+            type: 'input_image' as const,
+            image_url: `data:${mimeType};base64,${buffer.toString('base64')}`,
+            detail: 'auto' as const,
+          };
+        } catch (err) {
+          this.logger.warn(
+            `Não foi possível anexar imagem ao fallback da OpenAI (${imagePath}): ${(err as Error).message}`,
+          );
+          return null;
+        }
+      }),
+    );
+
+    return results.filter((result) => result !== null);
+  }
+
+  private getImageMimeType(imagePath: string): string {
+    const ext = extname(imagePath).toLowerCase();
+
+    switch (ext) {
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.gif':
+        return 'image/gif';
+      case '.webp':
+        return 'image/webp';
+      case '.bmp':
+        return 'image/bmp';
+      case '.svg':
+        return 'image/svg+xml';
+      default:
+        return 'image/png';
+    }
+  }
+
+  private extractOpenAiOutputText(
+    responseBody: {
+      output_text?: string;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    } | null,
+  ): string {
+    if (responseBody?.output_text?.trim()) {
+      return responseBody.output_text;
+    }
+
+    const textFromOutput = responseBody?.output
+      ?.flatMap((item) => item.content ?? [])
+      .find(
+        (content) =>
+          content.type === 'output_text' && typeof content.text === 'string',
+      )?.text;
+
+    if (textFromOutput?.trim()) {
+      return textFromOutput;
+    }
+
+    throw new Error('OpenAI API retornou uma resposta sem texto utilizável.');
   }
 
   private buildPrompt(

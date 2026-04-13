@@ -17,6 +17,11 @@ type ClaudeServiceTestable = {
   formatComments(comments: TrelloComment[]): string;
   formatImagePaths(paths: string[]): string;
   formatSpreadsheets(texts: string[]): string;
+  runWithRetry(
+    prompt: string,
+    repoPath: string,
+    imagePaths: string[],
+  ): Promise<ClaudeTriageResult>;
   buildPrompt(
     card: TrelloCard,
     comments: TrelloComment[],
@@ -34,6 +39,7 @@ describe('ClaudeService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockConfig.get.mockImplementation((key: string, def?: string) => def ?? '');
     const module = await Test.createTestingModule({
       providers: [
         ClaudeService,
@@ -245,6 +251,66 @@ describe('ClaudeService', () => {
       expect(result).toContain('hipoteseInicial');
       expect(result).toContain('arquivosCandidatos');
       expect(result).toContain('proximosPassosSugeridos');
+    });
+  });
+
+  describe('runWithRetry', () => {
+    it('usa OpenAI como fallback quando Claude retorna limite de uso', async () => {
+      mockConfig.get.mockImplementation((key: string, def?: string) => {
+        if (key === 'OPENAI_API_KEY') return 'test-openai-key';
+        if (key === 'OPENAI_MODEL') return 'gpt-5.1';
+        return def ?? '';
+      });
+
+      const module = await Test.createTestingModule({
+        providers: [
+          ClaudeService,
+          { provide: ConfigService, useValue: mockConfig },
+        ],
+      }).compile();
+      const service = module.get(ClaudeService);
+
+      const spawnClaudeSpy = jest
+        .spyOn(service as any, 'spawnClaude')
+        .mockRejectedValue(
+          new Error(
+            "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
+          ),
+        );
+      const openAiSpy = jest
+        .spyOn(service as any, 'runWithOpenAi')
+        .mockResolvedValue({
+          hipoteseInicial: 'fallback ok',
+          arquivosCandidatos: ['src/app.ts'],
+          proximosPassosSugeridos: ['verificar fluxo'],
+        });
+
+      await expect(
+        service.runWithRetry('prompt', '/repo', []),
+      ).resolves.toEqual({
+        hipoteseInicial: 'fallback ok',
+        arquivosCandidatos: ['src/app.ts'],
+        proximosPassosSugeridos: ['verificar fluxo'],
+      });
+
+      expect(spawnClaudeSpy).toHaveBeenCalledTimes(1);
+      expect(openAiSpy).toHaveBeenCalledWith('prompt', []);
+    });
+
+    it('falha com mensagem clara quando Claude atinge limite e OpenAI não está configurada', async () => {
+      const spawnClaudeSpy = jest
+        .spyOn(svc as any, 'spawnClaude')
+        .mockRejectedValue(
+          new Error(
+            "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
+          ),
+        );
+
+      await expect(svc.runWithRetry('prompt', '/repo', [])).rejects.toThrow(
+        'Defina OPENAI_API_KEY',
+      );
+
+      expect(spawnClaudeSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

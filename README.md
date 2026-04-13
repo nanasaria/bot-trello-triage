@@ -1,6 +1,6 @@
 # bot-triagem-trello
 
-Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para uma das listas de triagem (por padrão `Pendentes Analise - Chamados` e `Lotes`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos. O mesmo webhook também recalcula a quantidade de cards e atualiza o nome das listas monitoradas.
+Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para uma das listas de triagem (por padrão `Pendentes Analise - Chamados` e `Lotes`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos. O mesmo webhook também recalcula a quantidade de cards e atualiza o nome das listas monitoradas. Se o Claude responder que atingiu o limite de uso, o bot pode fazer fallback automático para a OpenAI quando `OPENAI_API_KEY` estiver configurada.
 
 ## Como funciona
 
@@ -9,12 +9,14 @@ Bot de triagem técnica automática para cards do Trello. Quando um card é cria
 3. O bot identifica se o card foi criado ou movido para uma das listas de triagem configuradas
 4. Após 2 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens, planilhas XLSX e documentos Word)
 5. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
-6. Posta um comentário de triagem no card com o resultado da análise
+6. Se o Claude informar que atingiu o limite de uso, o bot usa a OpenAI como fallback opcional
+7. Posta um comentário de triagem no card com o resultado da análise
 
 ## Pré-requisitos
 
 - **Node.js 18+**
 - **Claude Code CLI** instalado e autenticado (`claude --version` deve funcionar)
+- **OpenAI API Key** opcional, caso você queira habilitar fallback automático quando o Claude atingir o limite
 - **ffmpeg** instalado no sistema (necessário para processar vídeos anexados aos cards)
 - **ngrok** para expor o servidor localmente ao Trello
 - Conta no Trello com API Key, Token e OAuth Secret
@@ -95,6 +97,11 @@ Preencha as variáveis no `.env`:
 | `CLAUDE_BIN` | Caminho ou nome do binário do Claude CLI (padrão: `claude`) |
 | `CLAUDE_MODEL` | Modelo do Claude a usar (ex: `sonnet`, `opus`, `claude-sonnet-4-6`) |
 | `CLAUDE_MAX_TURNS` | Número máximo de turnos do Claude (padrão: `6`) |
+| `OPENAI_API_KEY` | Chave da OpenAI para fallback automático quando o Claude atingir o limite |
+| `OPENAI_MODEL` | Modelo da OpenAI usado no fallback. Exemplo: `gpt-5.1` |
+| `OPENAI_API_BASE_URL` | Base URL da API da OpenAI. Padrão: `https://api.openai.com/v1` |
+| `OPENAI_ORGANIZATION` | Opcional: organização usada na OpenAI |
+| `OPENAI_PROJECT` | Opcional: projeto usado na OpenAI |
 
 ### Obtendo credenciais do Trello
 
@@ -145,9 +152,22 @@ Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallbac
 - `Lotes`
 - `Em tratativa com Devs`
 - `Pendente publicar`
-- `Pendentes Resposta`
+- `Pendentes Resposta Tia Tati/Tia Regi`
 
 O bot ignora o sufixo numérico atual ao localizar as listas. Assim, nomes como `Lotes (01)` e `Lotes (12)` continuam sendo reconhecidos como a mesma lista.
+
+### Fallback para OpenAI
+
+Se o Claude CLI retornar uma mensagem como `You've hit your limit`, o bot pode enviar a mesma triagem para a OpenAI automaticamente. Para isso, basta configurar `OPENAI_API_KEY` no `.env`.
+
+Exemplo:
+
+```env
+OPENAI_API_KEY=<SECRET>
+OPENAI_MODEL=gpt-5.1
+```
+
+Se `OPENAI_API_KEY` não estiver definida, o comportamento continua igual ao de hoje: a triagem falha quando o Claude entra em limite.
 
 ## Instalação e execução
 

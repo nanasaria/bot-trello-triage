@@ -78,7 +78,7 @@ export class ClaudeService {
     comments: TrelloComment[],
     imagePaths: string[],
     spreadsheetTexts: string[],
-    documentTexts: string[],
+    documentTexts: string[] = [],
   ): string {
     const checklistSection = this.formatChecklists(card.checklists ?? []);
     const commentsSection = this.formatComments(comments);

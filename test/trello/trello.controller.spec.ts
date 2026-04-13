@@ -5,6 +5,7 @@ import { createHmac } from 'node:crypto';
 import { TrelloController } from '../../src/trello/trello.controller';
 import { TriageService } from '../../src/triage/triage.service';
 import { ConfigService } from '@nestjs/config';
+import { TrelloService } from '../../src/trello/trello.service';
 import type { TrelloWebhookPayload } from '../../src/trello/trello.types';
 
 type ControllerPrivate = {
@@ -16,6 +17,10 @@ const CALLBACK_URL = 'https://test.ngrok.app/trello/webhook';
 
 const mockEnqueue = jest.fn();
 const mockTriageService = { enqueue: mockEnqueue } as unknown as TriageService;
+const mockScheduleListCountSync = jest.fn();
+const mockTrelloService = {
+  scheduleListCountSync: mockScheduleListCountSync,
+} as unknown as TrelloService;
 
 const mockConfig = {
   getOrThrow: jest.fn((key: string) => {
@@ -38,7 +43,7 @@ describe('TrelloController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new TrelloController(mockTriageService, mockConfig);
+    controller = new TrelloController(mockTriageService, mockTrelloService, mockConfig);
   });
 
   describe('validateWebhook', () => {
@@ -55,6 +60,7 @@ describe('TrelloController', () => {
         rawBody: Buffer.from('{}'),
       } as unknown as RawBodyRequest<Request>;
       controller.receiveWebhook(req, { action } as TrelloWebhookPayload, 'sig');
+      expect(mockScheduleListCountSync).toHaveBeenCalledWith(action);
       expect(mockEnqueue).toHaveBeenCalledWith(action);
     });
 

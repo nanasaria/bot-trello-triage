@@ -5,6 +5,7 @@ import { extname, join } from 'node:path';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import type {
+  TrelloAction,
   TrelloAttachment,
   TrelloCard,
   TrelloComment,
@@ -20,7 +21,23 @@ export class TrelloService implements OnModuleInit {
   private readonly boardId: string;
   private readonly baseUrl = 'https://api.trello.com/1';
 
+  private readonly defaultTargetListPrefixes = [
+    'Pendentes Analise - Chamados',
+    'Lotes',
+  ];
+  private readonly defaultCountedListPrefixes = [
+    'Pendentes Analise - Chamados',
+    'Lotes',
+    'Em tratativa com Devs',
+    'Pendente publicar',
+    'Pendentes Resposta Tia Tati/Tia Regi',
+  ];
+
   private targetListIds: string[] = [];
+  private countedListIds: string[] = [];
+
+  private listCountSyncPending = false;
+  private isSyncingListCounts = false;
 
   constructor(private readonly config: ConfigService) {
     this.key = this.config.getOrThrow<string>('TRELLO_KEY');
@@ -31,9 +48,18 @@ export class TrelloService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       this.targetListIds = await this.resolveTargetListIds();
-      this.logger.log(`Listas alvo resolvidas: ${this.targetListIds.join(', ')}`);
+      this.logger.log(`Listas de triagem resolvidas: ${this.targetListIds.join(', ')}`);
     } catch (err) {
-      this.logger.error('Falha ao resolver listas alvo na inicialização', err);
+      this.logger.error('Falha ao resolver listas de triagem na inicialização', err);
+    }
+
+    try {
+      this.countedListIds = await this.resolveCountedListIds();
+      this.logger.log(
+        `Listas com contador resolvidas: ${this.countedListIds.join(', ')}`,
+      );
+    } catch (err) {
+      this.logger.error('Falha ao resolver listas com contador na inicialização', err);
     }
 
     await this.ensureWebhookRegistered();
@@ -45,6 +71,79 @@ export class TrelloService implements OnModuleInit {
     return this.targetListIds;
   }
 
+  scheduleListCountSync(action: TrelloAction): void {
+    if (!this.shouldSyncListCounts(action)) {
+      return;
+    }
+
+    this.listCountSyncPending = true;
+
+    if (this.isSyncingListCounts) {
+      return;
+    }
+
+    void this.flushListCountSyncQueue();
+  }
+
+  private async flushListCountSyncQueue(): Promise<void> {
+    this.isSyncingListCounts = true;
+
+    try {
+      while (this.listCountSyncPending) {
+        this.listCountSyncPending = false;
+        await this.refreshCountedLists();
+      }
+    } catch (err) {
+      this.logger.error(
+        `Falha ao sincronizar contadores das listas: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
+    } finally {
+      this.isSyncingListCounts = false;
+    }
+  }
+
+  private async refreshCountedLists(): Promise<void> {
+    const countedListIds = await this.getCountedListIds();
+    if (countedListIds.length === 0) {
+      return;
+    }
+
+    const boardLists = await this.fetchBoardLists('all');
+    const listsById = new Map(boardLists.map((list) => [list.id, list]));
+
+    for (const listId of countedListIds) {
+      const currentList = listsById.get(listId);
+
+      if (!currentList) {
+        this.logger.warn(`Lista monitorada ${listId} não encontrada no board`);
+        continue;
+      }
+
+      if (currentList.closed) {
+        this.logger.debug(`Lista ${currentList.name} está arquivada; contador não será atualizado`);
+        continue;
+      }
+
+      const cards = await this.fetchCardsInList(listId);
+      const nextName = this.buildCountedListName(currentList.name, cards.length);
+
+      if (currentList.name === nextName) {
+        this.logger.debug(`Lista ${currentList.name} já está com contador atualizado`);
+        continue;
+      }
+
+      await this.updateListName(listId, nextName);
+      this.logger.log(`Lista atualizada: "${currentList.name}" -> "${nextName}"`);
+    }
+  }
+
+  private async getCountedListIds(): Promise<string[]> {
+    if (this.countedListIds.length > 0) return this.countedListIds;
+    this.countedListIds = await this.resolveCountedListIds();
+    return this.countedListIds;
+  }
+
   private async resolveTargetListIds(): Promise<string[]> {
     const explicit = this.config.get<string>('TRELLO_TARGET_LIST_ID');
     if (explicit?.trim()) {
@@ -52,41 +151,71 @@ export class TrelloService implements OnModuleInit {
       return [explicit.trim()];
     }
 
-    const prefixesRaw =
-      this.config.get<string>('TRELLO_TARGET_LIST_PREFIXES', '') ||
-      this.config.get<string>('TRELLO_TARGET_LIST_PREFIX', 'Pendentes Analise - Chamados');
+    const prefixes = this.getConfiguredPrefixes(
+      'TRELLO_TARGET_LIST_PREFIXES',
+      this.defaultTargetListPrefixes,
+      'TRELLO_TARGET_LIST_PREFIX',
+    );
 
-    const prefixes = prefixesRaw
+    const lists = await this.resolveListsByPrefixes(prefixes);
+    return lists.map((list) => list.id);
+  }
+
+  private async resolveCountedListIds(): Promise<string[]> {
+    const prefixes = this.getConfiguredPrefixes(
+      'TRELLO_COUNTED_LIST_PREFIXES',
+      this.defaultCountedListPrefixes,
+    );
+
+    const lists = await this.resolveListsByPrefixes(prefixes);
+    return lists.map((list) => list.id);
+  }
+
+  private getConfiguredPrefixes(
+    configKey: string,
+    defaultPrefixes: string[],
+    legacyConfigKey?: string,
+  ): string[] {
+    const raw =
+      this.config.get<string>(configKey, '') ||
+      (legacyConfigKey ? this.config.get<string>(legacyConfigKey, '') : '') ||
+      defaultPrefixes.join(',');
+
+    return raw
       .split(',')
-      .map((p) => p.trim())
+      .map((prefix) => prefix.trim())
       .filter(Boolean);
+  }
 
+  private async resolveListsByPrefixes(prefixes: string[]): Promise<TrelloList[]> {
     const lists = await this.fetchBoardLists();
-    const ids: string[] = [];
+    const matches: TrelloList[] = [];
 
     for (const prefix of prefixes) {
       const normalizedPrefix = this.normalizeName(prefix);
       const match = lists.find(
-        (l) => !l.closed && this.normalizeName(l.name).startsWith(normalizedPrefix),
+        (list) => !list.closed && this.normalizeName(list.name).startsWith(normalizedPrefix),
       );
+
       if (match) {
-        this.logger.log(`Lista alvo encontrada: "${match.name}" (id: ${match.id})`);
-        ids.push(match.id);
-      } else {
-        this.logger.warn(
-          `Nenhuma lista encontrada com prefixo "${prefix}". ` +
-            `Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
-        );
+        this.logger.log(`Lista encontrada: "${match.name}" (id: ${match.id})`);
+        matches.push(match);
+        continue;
       }
-    }
 
-    if (ids.length === 0) {
-      throw new Error(
-        `Nenhuma lista alvo encontrada. Listas disponíveis: ${lists.map((l) => l.name).join(', ')}`,
+      this.logger.warn(
+        `Nenhuma lista encontrada com prefixo "${prefix}". ` +
+          `Listas disponíveis: ${lists.map((list) => list.name).join(', ')}`,
       );
     }
 
-    return ids;
+    if (matches.length === 0) {
+      throw new Error(
+        `Nenhuma lista encontrada. Listas disponíveis: ${lists.map((list) => list.name).join(', ')}`,
+      );
+    }
+
+    return matches;
   }
 
   private normalizeName(name: string): string {
@@ -99,8 +228,52 @@ export class TrelloService implements OnModuleInit {
       .toLowerCase();
   }
 
-  private async fetchBoardLists(): Promise<TrelloList[]> {
-    const url = this.buildUrl(`/boards/${this.boardId}/lists`, { filter: 'open' });
+  private stripCountSuffix(name: string): string {
+    return name.replace(/\s*\(\d+\)\s*$/, '').trim();
+  }
+
+  private extractCountPadding(name: string): number | null {
+    const match = name.match(/\((\d+)\)\s*$/);
+    return match ? match[1].length : null;
+  }
+
+  private buildCountedListName(currentName: string, count: number): string {
+    const baseName = this.stripCountSuffix(currentName);
+    const padding = this.extractCountPadding(currentName);
+    const formattedCount =
+      padding && padding > 0 ? String(count).padStart(padding, '0') : String(count);
+
+    return `${baseName} (${formattedCount})`;
+  }
+
+  private shouldSyncListCounts(action: TrelloAction): boolean {
+    switch (action.type) {
+      case 'createCard':
+      case 'copyCard':
+      case 'deleteCard':
+      case 'moveCardFromBoard':
+      case 'moveCardToBoard':
+        return true;
+
+      case 'updateCard':
+        return this.isListCountRelevantUpdate(action);
+
+      default:
+        return false;
+    }
+  }
+
+  private isListCountRelevantUpdate(action: TrelloAction): boolean {
+    return Boolean(
+      action.data.listBefore ||
+        action.data.listAfter ||
+        action.data.old?.idList !== undefined ||
+        action.data.old?.closed !== undefined,
+    );
+  }
+
+  private async fetchBoardLists(filter: 'open' | 'all' = 'open'): Promise<TrelloList[]> {
+    const url = this.buildUrl(`/boards/${this.boardId}/lists`, { filter });
     const res = await fetch(url);
     await this.assertOk(res, 'buscar listas do board');
     return res.json() as Promise<TrelloList[]>;
@@ -108,11 +281,12 @@ export class TrelloService implements OnModuleInit {
 
   async fetchCardsInList(listId: string): Promise<TrelloCard[]> {
     const url = this.buildUrl(`/lists/${listId}/cards`, {
-      fields: 'id,name,desc,idList,labels',
+      fields: 'id,name,desc,idList,labels,closed',
     });
     const res = await fetch(url);
     await this.assertOk(res, `buscar cards da lista ${listId}`);
-    return res.json() as Promise<TrelloCard[]>;
+    const cards = (await res.json()) as TrelloCard[];
+    return cards.filter((card) => !card.closed);
   }
 
   async fetchCard(cardId: string): Promise<TrelloCard> {
@@ -147,10 +321,10 @@ export class TrelloService implements OnModuleInit {
     const attachments = (await res.json()) as TrelloAttachment[];
 
     return {
-      images: attachments.filter((a) => a.mimeType?.startsWith('image/')),
-      spreadsheets: attachments.filter((a) => this.isSpreadsheet(a)),
-      documents: attachments.filter((a) => this.isWordDocument(a)),
-      videos: attachments.filter((a) => this.isVideo(a)),
+      images: attachments.filter((attachment) => attachment.mimeType?.startsWith('image/')),
+      spreadsheets: attachments.filter((attachment) => this.isSpreadsheet(attachment)),
+      documents: attachments.filter((attachment) => this.isWordDocument(attachment)),
+      videos: attachments.filter((attachment) => this.isVideo(attachment)),
     };
   }
 
@@ -239,7 +413,9 @@ export class TrelloService implements OnModuleInit {
 
   async hasTriageComment(cardId: string): Promise<boolean> {
     const comments = await this.fetchRecentComments(cardId, 20);
-    return comments.some((c) => c.data.text.startsWith('[Análise técnica automática]'));
+    return comments.some((comment) =>
+      comment.data.text.startsWith('[Análise técnica automática]'),
+    );
   }
 
   async postComment(cardId: string, text: string): Promise<void> {
@@ -253,6 +429,15 @@ export class TrelloService implements OnModuleInit {
     this.logger.log(`Comentário publicado no card ${cardId}`);
   }
 
+  private async updateListName(listId: string, name: string): Promise<void> {
+    const url = this.buildUrl(`/lists/${listId}`, { name });
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { Accept: 'application/json' },
+    });
+    await this.assertOk(res, `atualizar nome da lista ${listId}`);
+  }
+
   private async ensureWebhookRegistered(): Promise<void> {
     const callbackUrl = this.config.get<string>('TRELLO_WEBHOOK_CALLBACK_URL', '');
     if (!callbackUrl) {
@@ -264,10 +449,14 @@ export class TrelloService implements OnModuleInit {
       const listUrl = `${this.baseUrl}/tokens/${this.token}/webhooks?key=${this.key}&token=${this.token}`;
       const listRes = await fetch(listUrl);
       await this.assertOk(listRes, 'listar webhooks do token');
-      const webhooks = (await listRes.json()) as Array<{ callbackURL: string; idModel: string; active: boolean }>;
+      const webhooks = (await listRes.json()) as Array<{
+        callbackURL: string;
+        idModel: string;
+        active: boolean;
+      }>;
 
       const alreadyRegistered = webhooks.some(
-        (w) => w.callbackURL === callbackUrl && w.idModel === this.boardId,
+        (webhook) => webhook.callbackURL === callbackUrl && webhook.idModel === this.boardId,
       );
 
       if (alreadyRegistered) {
@@ -296,8 +485,8 @@ export class TrelloService implements OnModuleInit {
     const url = new URL(`${this.baseUrl}${path}`);
     url.searchParams.set('key', this.key);
     url.searchParams.set('token', this.token);
-    for (const [k, v] of Object.entries(params)) {
-      url.searchParams.set(k, v);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
     }
     return url.toString();
   }

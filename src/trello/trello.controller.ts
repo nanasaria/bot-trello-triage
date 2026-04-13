@@ -14,6 +14,7 @@ import { createHmac } from 'node:crypto';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { TriageService } from '../triage/triage.service.js';
+import { TrelloService } from './trello.service.js';
 import type { TrelloWebhookPayload } from './trello.types.js';
 
 @Controller('trello')
@@ -24,6 +25,7 @@ export class TrelloController {
 
   constructor(
     private readonly triageService: TriageService,
+    private readonly trelloService: TrelloService,
     private readonly config: ConfigService,
   ) {
     this.webhookSecret = this.config.getOrThrow<string>('TRELLO_OAUTH_SECRET');
@@ -48,6 +50,7 @@ export class TrelloController {
       return;
     }
 
+    this.trelloService.scheduleListCountSync(payload.action);
     this.triageService.enqueue(payload.action);
     this.logger.debug(`ActionId ${payload.action.id} enfileirado`);
   }

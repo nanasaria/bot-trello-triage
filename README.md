@@ -1,14 +1,15 @@
 # bot-triagem-trello
 
-Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para a lista alvo (ex: `Pendentes Analise - Chamados`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos.
+Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para uma das listas de triagem (por padrão `Pendentes Analise - Chamados` e `Lotes`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos. O mesmo webhook também recalcula a quantidade de cards e atualiza o nome das listas monitoradas.
 
 ## Como funciona
 
 1. O Trello envia um evento via webhook para o bot
-2. O bot identifica se o card foi criado/movido para a lista configurada
-3. Após 2 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens e planilhas XLSX)
-4. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
-5. Posta um comentário de triagem no card com o resultado da análise
+2. O bot recalcula as listas monitoradas para contador e atualiza o nome delas com a quantidade de cards
+3. O bot identifica se o card foi criado ou movido para uma das listas de triagem configuradas
+4. Após 2 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens, planilhas XLSX e documentos Word)
+5. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
+6. Posta um comentário de triagem no card com o resultado da análise
 
 ## Pré-requisitos
 
@@ -84,8 +85,9 @@ Preencha as variáveis no `.env`:
 | `TRELLO_TOKEN` | Token do Trello — gerado na mesma página |
 | `TRELLO_OAUTH_SECRET` | OAuth Secret da aplicação — campo "Secret" em [trello.com/app-key](https://trello.com/app-key) |
 | `TRELLO_BOARD_ID` | ID do board monitorado |
-| `TRELLO_TARGET_LIST_ID` | (Opcional) ID fixo de uma única lista alvo. Deixe vazio para descoberta automática pelos prefixos |
-| `TRELLO_TARGET_LIST_PREFIXES` | Prefixos das listas alvo separados por vírgula (ex: `Pendentes Analise - Chamados,Lotes`). O sufixo numérico como `(03)` é ignorado automaticamente |
+| `TRELLO_TARGET_LIST_ID` | (Opcional) ID fixo de uma única lista de triagem. Deixe vazio para descoberta automática pelos prefixos |
+| `TRELLO_TARGET_LIST_PREFIXES` | Prefixos das listas de triagem separados por vírgula. Padrão: `Pendentes Analise - Chamados,Lotes` |
+| `TRELLO_COUNTED_LIST_PREFIXES` | Prefixos das listas que terão contador no nome. Padrão: `Pendentes Analise - Chamados,Lotes,Em tratativa com Devs,Pendente publicar,Pendentes Resposta Tia Tati/Tia Regi` |
 | `TRELLO_WEBHOOK_CALLBACK_URL` | URL pública do webhook com `/trello/webhook` no final (ex: URL do ngrok) |
 | `TRELLO_SKIP_SIGNATURE` | `true` para desabilitar validação HMAC em desenvolvimento |
 | `REPO_LABEL_MAP` | JSON mapeando labels do card para caminhos de repositórios locais |
@@ -129,6 +131,23 @@ REPO_LABEL_MAP={"repo:meu-api":"/home/usuario/projetos/meu-api","repo:meu-front"
 ```
 
 Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallback.
+
+### Listas monitoradas por padrão
+
+**Triagem automática**
+
+- `Pendentes Analise - Chamados`
+- `Lotes`
+
+**Contador no nome da lista**
+
+- `Pendentes Analise - Chamados`
+- `Lotes`
+- `Em tratativa com Devs`
+- `Pendente publicar`
+- `Pendentes Resposta Tia Tati/Tia Regi`
+
+O bot ignora o sufixo numérico atual ao localizar as listas. Assim, nomes como `Lotes (01)` e `Lotes (12)` continuam sendo reconhecidos como a mesma lista.
 
 ## Instalação e execução
 

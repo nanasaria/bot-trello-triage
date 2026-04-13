@@ -44,7 +44,7 @@ const execFileAsyncMock = execFile as unknown as jest.Mock;
 const readdirMock = readdir as jest.Mock;
 
 const mockTrelloService = {
-  getTargetListId: jest.fn().mockResolvedValue('list-alvo'),
+  getTargetListIds: jest.fn().mockResolvedValue(['list-alvo']),
   hasTriageComment: jest.fn().mockResolvedValue(false),
   fetchCard: jest.fn().mockResolvedValue({
     id: 'card-1',
@@ -340,7 +340,7 @@ describe('TriageService', () => {
         },
       };
       await (service as unknown as TriageServicePrivate).handleAction(action);
-      expect(mockTrelloService.getTargetListId).not.toHaveBeenCalled();
+      expect(mockTrelloService.getTargetListIds).not.toHaveBeenCalled();
     });
 
     it('ignora action de lista diferente da alvo', async () => {

@@ -17,7 +17,11 @@ export interface TrelloActionData {
   listBefore?: TrelloListRef;
   listAfter?: TrelloListRef;
   board?: TrelloBoardRef;
-  old?: Record<string, unknown>;
+  old?: {
+    idList?: string;
+    closed?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface TrelloCardRef {
@@ -47,6 +51,7 @@ export interface TrelloCard {
   name: string;
   desc: string;
   idList: string;
+  closed?: boolean;
   labels: TrelloLabel[];
   checklists?: TrelloChecklist[];
 }

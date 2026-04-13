@@ -29,7 +29,9 @@ export class TrelloController {
     private readonly config: ConfigService,
   ) {
     this.webhookSecret = this.config.getOrThrow<string>('TRELLO_OAUTH_SECRET');
-    this.callbackUrl = this.config.getOrThrow<string>('TRELLO_WEBHOOK_CALLBACK_URL');
+    this.callbackUrl = this.config.getOrThrow<string>(
+      'TRELLO_WEBHOOK_CALLBACK_URL',
+    );
   }
 
   @Head('webhook')
@@ -55,7 +57,10 @@ export class TrelloController {
     this.logger.debug(`ActionId ${payload.action.id} enfileirado`);
   }
 
-  private verifySignature(rawBody: Buffer | undefined, signature: string): void {
+  private verifySignature(
+    rawBody: Buffer | undefined,
+    signature: string,
+  ): void {
     const skip = this.config.get<string>('TRELLO_SKIP_SIGNATURE') === 'true';
     if (skip) return;
 
@@ -64,7 +69,9 @@ export class TrelloController {
     }
 
     if (!rawBody?.length) {
-      throw new UnauthorizedException('Body vazio — impossível verificar assinatura');
+      throw new UnauthorizedException(
+        'Body vazio — impossível verificar assinatura',
+      );
     }
 
     const expected = createHmac('sha1', this.webhookSecret)

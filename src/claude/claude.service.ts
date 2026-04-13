@@ -37,7 +37,13 @@ export class ClaudeService {
     spreadsheetTexts: string[] = [],
     documentTexts: string[] = [],
   ): Promise<ClaudeTriageResult> {
-    const prompt = this.buildPrompt(card, comments, imagePaths, spreadsheetTexts, documentTexts);
+    const prompt = this.buildPrompt(
+      card,
+      comments,
+      imagePaths,
+      spreadsheetTexts,
+      documentTexts,
+    );
     this.logger.log(`Executando Claude CLI em: ${repoPath}`);
     this.logger.debug(`Prompt montado (${prompt.length} chars)`);
 
@@ -164,12 +170,16 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 
   private formatSpreadsheets(spreadsheetTexts: string[]): string {
     if (spreadsheetTexts.length === 0) return 'Nenhuma planilha anexada.';
-    return spreadsheetTexts.map((t) => this.truncateAttachment(t)).join('\n\n---\n\n');
+    return spreadsheetTexts
+      .map((t) => this.truncateAttachment(t))
+      .join('\n\n---\n\n');
   }
 
   private formatDocuments(documentTexts: string[]): string {
     if (documentTexts.length === 0) return 'Nenhum documento anexado.';
-    return documentTexts.map((t) => this.truncateAttachment(t)).join('\n\n---\n\n');
+    return documentTexts
+      .map((t) => this.truncateAttachment(t))
+      .join('\n\n---\n\n');
   }
 
   private truncateAttachment(text: string): string {
@@ -282,22 +292,33 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
 
     const obj = parsed as Record<string, unknown>;
 
-    if (typeof obj.hipoteseInicial !== 'string' || !obj.hipoteseInicial.trim()) {
-      throw new Error('Campo "hipoteseInicial" ausente ou inválido na resposta do Claude.');
+    if (
+      typeof obj.hipoteseInicial !== 'string' ||
+      !obj.hipoteseInicial.trim()
+    ) {
+      throw new Error(
+        'Campo "hipoteseInicial" ausente ou inválido na resposta do Claude.',
+      );
     }
 
     if (!Array.isArray(obj.arquivosCandidatos)) {
-      throw new Error('Campo "arquivosCandidatos" ausente ou não é array na resposta do Claude.');
+      throw new Error(
+        'Campo "arquivosCandidatos" ausente ou não é array na resposta do Claude.',
+      );
     }
 
     if (!Array.isArray(obj.proximosPassosSugeridos)) {
-      throw new Error('Campo "proximosPassosSugeridos" ausente ou não é array na resposta do Claude.');
+      throw new Error(
+        'Campo "proximosPassosSugeridos" ausente ou não é array na resposta do Claude.',
+      );
     }
 
     return {
       hipoteseInicial: obj.hipoteseInicial,
       arquivosCandidatos: (obj.arquivosCandidatos as unknown[]).map(String),
-      proximosPassosSugeridos: (obj.proximosPassosSugeridos as unknown[]).map(String),
+      proximosPassosSugeridos: (obj.proximosPassosSugeridos as unknown[]).map(
+        String,
+      ),
     };
   }
 }

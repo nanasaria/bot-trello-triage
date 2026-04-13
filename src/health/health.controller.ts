@@ -40,7 +40,10 @@ export class HealthController {
       const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) return { ok: false, message: `HTTP ${res.status}` };
       const data = (await res.json()) as { username?: string };
-      return { ok: true, message: `autenticado como @${data.username ?? 'desconhecido'}` };
+      return {
+        ok: true,
+        message: `autenticado como @${data.username ?? 'desconhecido'}`,
+      };
     } catch (err) {
       return { ok: false, message: (err as Error).message };
     }

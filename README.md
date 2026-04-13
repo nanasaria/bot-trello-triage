@@ -145,7 +145,7 @@ Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallbac
 - `Lotes`
 - `Em tratativa com Devs`
 - `Pendente publicar`
-- `Pendentes Resposta Tia Tati/Tia Regi`
+- `Pendentes Resposta`
 
 O bot ignora o sufixo numérico atual ao localizar as listas. Assim, nomes como `Lotes (01)` e `Lotes (12)` continuam sendo reconhecidos como a mesma lista.
 

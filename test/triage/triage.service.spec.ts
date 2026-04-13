@@ -17,7 +17,11 @@ type TriageServicePrivate = {
   formatTriageComment(result: TriageResult): string;
   trackActionId(actionId: string): void;
   handleAction(action: TrelloAction): Promise<void>;
-  extractVideoFrames(videoPath: string, destDir: string, videoName: string): Promise<string[]>;
+  extractVideoFrames(
+    videoPath: string,
+    destDir: string,
+    videoName: string,
+  ): Promise<string[]>;
   processedActionIds: Map<string, true>;
   PROCESSED_IDS_MAX: number;
   repoLabelMap: Record<string, string>;
@@ -55,12 +59,19 @@ const mockTrelloService = {
     checklists: [],
   }),
   fetchRecentComments: jest.fn().mockResolvedValue([]),
-  fetchAttachments: jest
+  fetchAttachments: jest.fn().mockResolvedValue({
+    images: [],
+    spreadsheets: [],
+    documents: [],
+    videos: [],
+  }),
+  downloadAttachmentToDir: jest
     .fn()
-    .mockResolvedValue({ images: [], spreadsheets: [], documents: [], videos: [] }),
-  downloadAttachmentToDir: jest.fn().mockResolvedValue('/tmp/triage-card-abc/file.mp4'),
+    .mockResolvedValue('/tmp/triage-card-abc/file.mp4'),
   downloadSpreadsheetAsText: jest.fn(),
-  downloadWordDocumentAsText: jest.fn().mockResolvedValue('conteúdo do documento'),
+  downloadWordDocumentAsText: jest
+    .fn()
+    .mockResolvedValue('conteúdo do documento'),
   postComment: jest.fn().mockResolvedValue(undefined),
 };
 
@@ -398,9 +409,15 @@ describe('TriageService', () => {
   describe('extractVideoFrames', () => {
     it('retorna caminhos dos frames ordenados quando ffmpeg extrai frames', async () => {
       execFileAsyncMock.mockResolvedValue(undefined);
-      readdirMock.mockResolvedValue(['frame_003.png', 'frame_001.png', 'frame_002.png']);
+      readdirMock.mockResolvedValue([
+        'frame_003.png',
+        'frame_001.png',
+        'frame_002.png',
+      ]);
 
-      const frames = await (service as unknown as TriageServicePrivate).extractVideoFrames(
+      const frames = await (
+        service as unknown as TriageServicePrivate
+      ).extractVideoFrames(
         '/tmp/video.mp4',
         '/tmp/triage-card-abc',
         'video.mp4',
@@ -416,7 +433,9 @@ describe('TriageService', () => {
       execFileAsyncMock.mockResolvedValue(undefined);
       readdirMock.mockResolvedValue([]);
 
-      const frames = await (service as unknown as TriageServicePrivate).extractVideoFrames(
+      const frames = await (
+        service as unknown as TriageServicePrivate
+      ).extractVideoFrames(
         '/tmp/video.mp4',
         '/tmp/triage-card-abc',
         'video.mp4',
@@ -427,9 +446,16 @@ describe('TriageService', () => {
 
     it('ignora arquivos que não são PNG no diretório de frames', async () => {
       execFileAsyncMock.mockResolvedValue(undefined);
-      readdirMock.mockResolvedValue(['frame_001.png', 'frame_002.png', 'video.mp4', '.DS_Store']);
+      readdirMock.mockResolvedValue([
+        'frame_001.png',
+        'frame_002.png',
+        'video.mp4',
+        '.DS_Store',
+      ]);
 
-      const frames = await (service as unknown as TriageServicePrivate).extractVideoFrames(
+      const frames = await (
+        service as unknown as TriageServicePrivate
+      ).extractVideoFrames(
         '/tmp/video.mp4',
         '/tmp/triage-card-abc',
         'video.mp4',
@@ -463,9 +489,9 @@ describe('TriageService', () => {
         'video.mp4',
       );
 
-      const ffmpegCall = (execFileAsyncMock.mock.calls as [string, string[]][]).find(
-        ([cmd]) => cmd === 'ffmpeg',
-      );
+      const ffmpegCall = (
+        execFileAsyncMock.mock.calls as [string, string[]][]
+      ).find(([cmd]) => cmd === 'ffmpeg');
       expect(ffmpegCall).toBeDefined();
       const ffmpegArgs = ffmpegCall![1];
       expect(ffmpegArgs).toContain('fps=1/10');

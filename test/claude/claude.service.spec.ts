@@ -1,7 +1,14 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { ClaudeService, ClaudeTriageResult } from '../../src/claude/claude.service';
-import type { TrelloCard, TrelloChecklist, TrelloComment } from '../../src/trello/trello.types';
+import {
+  ClaudeService,
+  ClaudeTriageResult,
+} from '../../src/claude/claude.service';
+import type {
+  TrelloCard,
+  TrelloChecklist,
+  TrelloComment,
+} from '../../src/trello/trello.types';
 
 type ClaudeServiceTestable = {
   parseAndValidate(output: string): ClaudeTriageResult;
@@ -33,7 +40,7 @@ describe('ClaudeService', () => {
         { provide: ConfigService, useValue: mockConfig },
       ],
     }).compile();
-    svc = module.get(ClaudeService) as unknown as ClaudeServiceTestable;
+    svc = module.get(ClaudeService);
   });
 
   describe('parseAndValidate', () => {
@@ -74,7 +81,10 @@ describe('ClaudeService', () => {
 
     it('lança erro quando hipoteseInicial está ausente', () => {
       expect(() =>
-        svc.validateResult({ arquivosCandidatos: [], proximosPassosSugeridos: [] }),
+        svc.validateResult({
+          arquivosCandidatos: [],
+          proximosPassosSugeridos: [],
+        }),
       ).toThrow('hipoteseInicial');
     });
 
@@ -174,7 +184,10 @@ describe('ClaudeService', () => {
         data: { text },
         memberCreator: { id: 'm1', fullName: 'Autor', username: 'autor' },
       });
-      const result = svc.formatComments([make('1', 'primeiro'), make('2', 'segundo')]);
+      const result = svc.formatComments([
+        make('1', 'primeiro'),
+        make('2', 'segundo'),
+      ]);
       expect(result).toContain('primeiro');
       expect(result).toContain('segundo');
       expect(result).toContain('---');

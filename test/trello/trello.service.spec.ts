@@ -1,7 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { TrelloService } from '../../src/trello/trello.service';
-import type { TrelloAction, TrelloAttachment } from '../../src/trello/trello.types';
+import type {
+  TrelloAction,
+  TrelloAttachment,
+} from '../../src/trello/trello.types';
 
 type TrelloServiceTestable = {
   normalizeName(name: string): string;
@@ -30,11 +33,15 @@ jest.mock('xlsx', () => ({
 }));
 
 jest.mock('mammoth', () => ({
-  extractRawText: jest.fn().mockResolvedValue({ value: 'conteúdo do documento', messages: [] }),
+  extractRawText: jest
+    .fn()
+    .mockResolvedValue({ value: 'conteúdo do documento', messages: [] }),
 }));
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as unknown as typeof fetch;
+
+type FetchCall = [input: unknown, init?: RequestInit];
 
 const mockConfig = {
   get: jest.fn((key: string, def?: string) => def ?? ''),
@@ -55,7 +62,11 @@ function mockResponse(body: unknown, ok = true, status = 200) {
     ok,
     status,
     json: jest.fn().mockResolvedValue(body),
-    text: jest.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
+    text: jest
+      .fn()
+      .mockResolvedValue(
+        typeof body === 'string' ? body : JSON.stringify(body),
+      ),
     arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
   } as unknown as Response;
 }
@@ -65,6 +76,10 @@ async function waitForAsyncWork(): Promise<void> {
   await Promise.resolve();
 }
 
+function getFetchCalls(): FetchCall[] {
+  return fetchMock.mock.calls as FetchCall[];
+}
+
 describe('TrelloService', () => {
   let service: TrelloService;
 
@@ -72,7 +87,10 @@ describe('TrelloService', () => {
     jest.clearAllMocks();
 
     const module = await Test.createTestingModule({
-      providers: [TrelloService, { provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        TrelloService,
+        { provide: ConfigService, useValue: mockConfig },
+      ],
     }).compile();
 
     service = module.get(TrelloService);
@@ -91,7 +109,10 @@ describe('TrelloService', () => {
   describe('buildCountedListName', () => {
     it('preserva a largura do contador quando já existe no nome', () => {
       expect(
-        (service as unknown as TrelloServiceTestable).buildCountedListName('Lotes (01)', 7),
+        (service as unknown as TrelloServiceTestable).buildCountedListName(
+          'Lotes (01)',
+          7,
+        ),
       ).toBe('Lotes (07)');
     });
 
@@ -107,9 +128,12 @@ describe('TrelloService', () => {
 
   describe('buildUrl', () => {
     it('inclui key, token e parâmetros extras na URL', () => {
-      const url = (service as unknown as TrelloServiceTestable).buildUrl('/lists/list-1', {
-        name: 'Lotes (07)',
-      });
+      const url = (service as unknown as TrelloServiceTestable).buildUrl(
+        '/lists/list-1',
+        {
+          name: 'Lotes (07)',
+        },
+      );
 
       expect(url).toContain('key=test-key');
       expect(url).toContain('token=test-token');
@@ -135,10 +159,16 @@ describe('TrelloService', () => {
       } as unknown as Response;
 
       await expect(
-        (service as unknown as TrelloServiceTestable).assertOk(response, 'buscar listas'),
+        (service as unknown as TrelloServiceTestable).assertOk(
+          response,
+          'buscar listas',
+        ),
       ).rejects.toThrow('HTTP 404');
       await expect(
-        (service as unknown as TrelloServiceTestable).assertOk(response, 'buscar listas'),
+        (service as unknown as TrelloServiceTestable).assertOk(
+          response,
+          'buscar listas',
+        ),
       ).rejects.toThrow('Not Found');
     });
   });
@@ -147,8 +177,22 @@ describe('TrelloService', () => {
     it('filtra cards arquivados da resposta', async () => {
       fetchMock.mockResolvedValue(
         mockResponse([
-          { id: 'c1', name: 'Card aberto', desc: '', idList: 'l1', labels: [], closed: false },
-          { id: 'c2', name: 'Card arquivado', desc: '', idList: 'l1', labels: [], closed: true },
+          {
+            id: 'c1',
+            name: 'Card aberto',
+            desc: '',
+            idList: 'l1',
+            labels: [],
+            closed: false,
+          },
+          {
+            id: 'c2',
+            name: 'Card arquivado',
+            desc: '',
+            idList: 'l1',
+            labels: [],
+            closed: true,
+          },
         ]),
       );
 
@@ -175,7 +219,8 @@ describe('TrelloService', () => {
           {
             id: '2',
             name: 'dados.xlsx',
-            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            mimeType:
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             url: 'u2',
             isUpload: true,
             bytes: 200,
@@ -193,7 +238,8 @@ describe('TrelloService', () => {
           {
             id: '4',
             name: 'relatorio.docx',
-            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            mimeType:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             url: 'u4',
             isUpload: true,
             bytes: 400,
@@ -251,7 +297,11 @@ describe('TrelloService', () => {
 
       fetchMock.mockResolvedValue(
         mockResponse([
-          { id: 'list-1', name: 'Pendentes Analise - Chamados (5)', closed: false },
+          {
+            id: 'list-1',
+            name: 'Pendentes Analise - Chamados (5)',
+            closed: false,
+          },
           { id: 'list-2', name: 'Lotes (01)', closed: false },
           { id: 'list-3', name: 'Outro fluxo', closed: false },
         ]),
@@ -281,7 +331,11 @@ describe('TrelloService', () => {
 
       fetchMock.mockResolvedValue(
         mockResponse([
-          { id: 'list-1', name: 'Pendentes Analise - Chamados (5)', closed: false },
+          {
+            id: 'list-1',
+            name: 'Pendentes Analise - Chamados (5)',
+            closed: false,
+          },
           { id: 'list-2', name: 'Lotes (01)', closed: false },
           { id: 'list-3', name: 'Em tratativa com Devs (06)', closed: false },
           { id: 'list-4', name: 'Pendente publicar (02)', closed: false },
@@ -311,7 +365,9 @@ describe('TrelloService', () => {
       };
 
       expect(
-        (service as unknown as TrelloServiceTestable).shouldSyncListCounts(action),
+        (service as unknown as TrelloServiceTestable).shouldSyncListCounts(
+          action,
+        ),
       ).toBe(true);
     });
 
@@ -324,7 +380,9 @@ describe('TrelloService', () => {
       };
 
       expect(
-        (service as unknown as TrelloServiceTestable).shouldSyncListCounts(action),
+        (service as unknown as TrelloServiceTestable).shouldSyncListCounts(
+          action,
+        ),
       ).toBe(false);
     });
   });
@@ -369,7 +427,10 @@ describe('TrelloService', () => {
 
   describe('refreshCountedLists', () => {
     it('recalcula a quantidade e renomeia só as listas que mudaram', async () => {
-      (service as unknown as TrelloServiceTestable).countedListIds = ['list-1', 'list-2'];
+      (service as unknown as TrelloServiceTestable).countedListIds = [
+        'list-1',
+        'list-2',
+      ];
 
       fetchMock
         .mockResolvedValueOnce(
@@ -380,16 +441,51 @@ describe('TrelloService', () => {
         )
         .mockResolvedValueOnce(
           mockResponse([
-            { id: 'card-1', name: 'A', desc: '', idList: 'list-1', labels: [], closed: false },
-            { id: 'card-2', name: 'B', desc: '', idList: 'list-1', labels: [], closed: false },
-            { id: 'card-3', name: 'C', desc: '', idList: 'list-1', labels: [], closed: true },
+            {
+              id: 'card-1',
+              name: 'A',
+              desc: '',
+              idList: 'list-1',
+              labels: [],
+              closed: false,
+            },
+            {
+              id: 'card-2',
+              name: 'B',
+              desc: '',
+              idList: 'list-1',
+              labels: [],
+              closed: false,
+            },
+            {
+              id: 'card-3',
+              name: 'C',
+              desc: '',
+              idList: 'list-1',
+              labels: [],
+              closed: true,
+            },
           ]),
         )
         .mockResolvedValueOnce(mockResponse({}))
         .mockResolvedValueOnce(
           mockResponse([
-            { id: 'card-4', name: 'D', desc: '', idList: 'list-2', labels: [], closed: false },
-            { id: 'card-5', name: 'E', desc: '', idList: 'list-2', labels: [], closed: false },
+            {
+              id: 'card-4',
+              name: 'D',
+              desc: '',
+              idList: 'list-2',
+              labels: [],
+              closed: false,
+            },
+            {
+              id: 'card-5',
+              name: 'E',
+              desc: '',
+              idList: 'list-2',
+              labels: [],
+              closed: false,
+            },
           ]),
         );
 
@@ -397,17 +493,19 @@ describe('TrelloService', () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(4);
 
-      const putCall = fetchMock.mock.calls.find(
+      const fetchCalls = getFetchCalls();
+
+      const putCall = fetchCalls.find(
         ([url, options]) =>
-          String(url).includes('/lists/list-1') && (options as RequestInit)?.method === 'PUT',
+          String(url).includes('/lists/list-1') && options?.method === 'PUT',
       );
 
       expect(putCall).toBeDefined();
       expect(String(putCall?.[0])).toContain('name=Lotes+%2802%29');
 
-      const secondListPutCall = fetchMock.mock.calls.find(
+      const secondListPutCall = fetchCalls.find(
         ([url, options]) =>
-          String(url).includes('/lists/list-2') && (options as RequestInit)?.method === 'PUT',
+          String(url).includes('/lists/list-2') && options?.method === 'PUT',
       );
 
       expect(secondListPutCall).toBeUndefined();
@@ -420,7 +518,8 @@ describe('TrelloService', () => {
         id: 'att-1',
         name: 'relatorio.docx',
         url: 'https://trello.com/1/cards/c1/attachments/att-1/download/relatorio.docx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         isUpload: true,
         bytes: 1024,
         date: '',
@@ -430,10 +529,10 @@ describe('TrelloService', () => {
 
       await service.downloadWordDocumentAsText(attachment);
 
-      const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect((options.headers as Record<string, string>).Authorization).toContain(
-        'oauth_consumer_key',
-      );
+      const [, options] = getFetchCalls()[0] ?? [];
+      expect(
+        (options.headers as Record<string, string>).Authorization,
+      ).toContain('oauth_consumer_key');
     });
   });
 });

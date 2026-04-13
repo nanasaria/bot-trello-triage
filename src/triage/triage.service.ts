@@ -36,8 +36,7 @@ export class TriageService implements OnModuleInit {
   }
 
   onModuleInit(): void {
-    const enabled =
-      this.config.get<string>('STARTUP_SCAN', 'true') !== 'false';
+    const enabled = this.config.get<string>('STARTUP_SCAN', 'true') !== 'false';
     if (!enabled) {
       this.logger.log('Scan inicial desabilitado (STARTUP_SCAN=false)');
       return;
@@ -60,10 +59,14 @@ export class TriageService implements OnModuleInit {
         );
         for (const card of cards) {
           if (this.processedCardIds.has(card.id)) {
-            this.logger.debug(`Card ${card.id} já triado nesta sessão, ignorando`);
+            this.logger.debug(
+              `Card ${card.id} já triado nesta sessão, ignorando`,
+            );
             continue;
           }
-          const alreadyTriaged = await this.trelloService.hasTriageComment(card.id);
+          const alreadyTriaged = await this.trelloService.hasTriageComment(
+            card.id,
+          );
           if (alreadyTriaged) {
             this.processedCardIds.add(card.id);
           } else {
@@ -148,7 +151,9 @@ export class TriageService implements OnModuleInit {
     this.trackActionId(actionId);
 
     if (type === 'updateCard') {
-      this.logger.log(`Card ${cardId} movido para a lista alvo — iniciando scan completo`);
+      this.logger.log(
+        `Card ${cardId} movido para a lista alvo — iniciando scan completo`,
+      );
       await this.scanUntriaged();
     } else {
       try {
@@ -344,9 +349,15 @@ export class TriageService implements OnModuleInit {
             att,
             tmpDir,
           );
-          const frames = await this.extractVideoFrames(videoPath, tmpDir, att.name);
+          const frames = await this.extractVideoFrames(
+            videoPath,
+            tmpDir,
+            att.name,
+          );
           imagePaths.push(...frames);
-          this.logger.debug(`${frames.length} frame(s) extraído(s) de "${att.name}"`);
+          this.logger.debug(
+            `${frames.length} frame(s) extraído(s) de "${att.name}"`,
+          );
         } catch (err) {
           this.logger.warn(
             `Falha ao processar vídeo "${att.name}": ${(err as Error).message}`,
@@ -404,9 +415,12 @@ export class TriageService implements OnModuleInit {
     await execFileAsync('mkdir', ['-p', framesDir]);
 
     await execFileAsync('ffmpeg', [
-      '-i', videoPath,
-      '-vf', 'fps=1/10',
-      '-frames:v', '10',
+      '-i',
+      videoPath,
+      '-vf',
+      'fps=1/10',
+      '-frames:v',
+      '10',
       join(framesDir, 'frame_%03d.png'),
     ]);
 

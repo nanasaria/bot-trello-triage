@@ -43,7 +43,11 @@ describe('TrelloController', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new TrelloController(mockTriageService, mockTrelloService, mockConfig);
+    controller = new TrelloController(
+      mockTriageService,
+      mockTrelloService,
+      mockConfig,
+    );
   });
 
   describe('validateWebhook', () => {

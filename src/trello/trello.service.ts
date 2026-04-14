@@ -63,6 +63,7 @@ export class TrelloService implements OnModuleInit {
       this.logger.log(
         `Listas com contador resolvidas: ${this.countedListIds.join(', ')}`,
       );
+      await this.refreshCountedLists();
     } catch (err) {
       this.logger.error(
         'Falha ao resolver listas com contador na inicialização',

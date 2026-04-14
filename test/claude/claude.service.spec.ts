@@ -28,6 +28,7 @@ type ClaudeServiceTestable = {
     imagePaths: string[],
     spreadsheetTexts: string[],
   ): string;
+  buildFallbackPrompt(prompt: string, repoPath: string): Promise<string>;
 };
 
 const mockConfig = {
@@ -254,11 +255,30 @@ describe('ClaudeService', () => {
     });
   });
 
+  describe('buildFallbackPrompt', () => {
+    it('injeta o contexto do repositório antes das instruções obrigatórias', async () => {
+      jest
+        .spyOn(svc as any, 'buildRepoContext')
+        .mockResolvedValue('### src/auth.ts\nTrecho relevante:\n10: login()');
+
+      const result = await svc.buildFallbackPrompt(
+        'texto base\n## Instruções obrigatórias\nresto',
+        '/repo',
+      );
+
+      expect(result).toContain('Contexto adicional do repositório local');
+      expect(result.indexOf('Contexto adicional do repositório local')).toBeLessThan(
+        result.indexOf('## Instruções obrigatórias'),
+      );
+      expect(result).toContain('### src/auth.ts');
+    });
+  });
+
   describe('runWithRetry', () => {
-    it('usa OpenAI como fallback quando Claude retorna limite de uso', async () => {
+    it('usa Gemini como fallback principal quando Claude retorna limite de uso', async () => {
       mockConfig.get.mockImplementation((key: string, def?: string) => {
-        if (key === 'OPENAI_API_KEY') return 'test-openai-key';
-        if (key === 'OPENAI_MODEL') return 'gpt-5.1';
+        if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+        if (key === 'GEMINI_MODEL') return 'gemini-2.5-pro';
         return def ?? '';
       });
 
@@ -277,40 +297,88 @@ describe('ClaudeService', () => {
             "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
           ),
         );
-      const openAiSpy = jest
-        .spyOn(service as any, 'runWithOpenAi')
+      const fallbackPromptSpy = jest
+        .spyOn(service as any, 'buildFallbackPrompt')
+        .mockResolvedValue('prompt com contexto');
+      const geminiSpy = jest
+        .spyOn(service as any, 'runWithGemini')
         .mockResolvedValue({
-          hipoteseInicial: 'fallback ok',
+          hipoteseInicial: 'fallback gemini ok',
           arquivosCandidatos: ['src/app.ts'],
           proximosPassosSugeridos: ['verificar fluxo'],
         });
 
       await expect(
-        service.runWithRetry('prompt', '/repo', []),
+        service.runWithRetry('prompt', '/repo', ['/tmp/a.png']),
       ).resolves.toEqual({
-        hipoteseInicial: 'fallback ok',
+        hipoteseInicial: 'fallback gemini ok',
         arquivosCandidatos: ['src/app.ts'],
         proximosPassosSugeridos: ['verificar fluxo'],
       });
 
       expect(spawnClaudeSpy).toHaveBeenCalledTimes(1);
-      expect(openAiSpy).toHaveBeenCalledWith('prompt', []);
+      expect(fallbackPromptSpy).toHaveBeenCalledWith('prompt', '/repo');
+      expect(geminiSpy).toHaveBeenCalledWith('prompt com contexto', [
+        '/tmp/a.png',
+      ]);
     });
 
-    it('falha com mensagem clara quando Claude atinge limite e OpenAI não está configurada', async () => {
-      const spawnClaudeSpy = jest
-        .spyOn(svc as any, 'spawnClaude')
-        .mockRejectedValue(
-          new Error(
-            "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
-          ),
-        );
+    it('usa DeepSeek quando Gemini falha e o fallback econômico está configurado', async () => {
+      mockConfig.get.mockImplementation((key: string, def?: string) => {
+        if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+        if (key === 'DEEPSEEK_API_KEY') return 'test-deepseek-key';
+        return def ?? '';
+      });
 
-      await expect(svc.runWithRetry('prompt', '/repo', [])).rejects.toThrow(
-        'Defina OPENAI_API_KEY',
+      const module = await Test.createTestingModule({
+        providers: [
+          ClaudeService,
+          { provide: ConfigService, useValue: mockConfig },
+        ],
+      }).compile();
+      const service = module.get(ClaudeService);
+
+      jest.spyOn(service as any, 'spawnClaude').mockRejectedValue(
+        new Error(
+          "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
+        ),
+      );
+      jest
+        .spyOn(service as any, 'buildFallbackPrompt')
+        .mockResolvedValue('prompt com contexto');
+      const geminiSpy = jest
+        .spyOn(service as any, 'runWithGemini')
+        .mockRejectedValue(new Error('Gemini indisponível'));
+      const deepSeekSpy = jest
+        .spyOn(service as any, 'runWithDeepSeek')
+        .mockResolvedValue({
+          hipoteseInicial: 'fallback deepseek ok',
+          arquivosCandidatos: ['src/auth.ts'],
+          proximosPassosSugeridos: ['validar credenciais'],
+        });
+
+      await expect(service.runWithRetry('prompt', '/repo', [])).resolves.toEqual(
+        {
+          hipoteseInicial: 'fallback deepseek ok',
+          arquivosCandidatos: ['src/auth.ts'],
+          proximosPassosSugeridos: ['validar credenciais'],
+        },
       );
 
-      expect(spawnClaudeSpy).toHaveBeenCalledTimes(1);
+      expect(geminiSpy).toHaveBeenCalledTimes(1);
+      expect(deepSeekSpy).toHaveBeenCalledWith('prompt com contexto');
+    });
+
+    it('falha com mensagem clara quando Claude atinge limite e nenhum fallback está configurado', async () => {
+      jest.spyOn(svc as any, 'spawnClaude').mockRejectedValue(
+        new Error(
+          "Claude CLI encerrou com código 1.\nStdout: You've hit your limit · resets 9pm (America/Sao_Paulo)",
+        ),
+      );
+
+      await expect(svc.runWithRetry('prompt', '/repo', [])).rejects.toThrow(
+        'nenhum fallback configurado',
+      );
     });
   });
 });

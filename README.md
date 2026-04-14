@@ -1,6 +1,6 @@
 # bot-triagem-trello
 
-Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para uma das listas de triagem (por padrão `Pendentes Analise - Chamados` e `Lotes`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos. O mesmo webhook também recalcula a quantidade de cards e atualiza o nome das listas monitoradas. Se o Claude responder que atingiu o limite de uso, o bot pode fazer fallback automático para a OpenAI quando `OPENAI_API_KEY` estiver configurada.
+Bot de triagem técnica automática para cards do Trello. Quando um card é criado ou movido para uma das listas de triagem (por padrão `Pendentes Analise - Chamados` e `Lotes`), o bot aguarda 2 minutos e 30 segundos, analisa o card com o Claude CLI no repositório local e posta um comentário estruturado com hipótese inicial, arquivos candidatos e próximos passos. O mesmo webhook também recalcula a quantidade de cards e atualiza o nome das listas monitoradas. Se o Claude responder que atingiu o limite de uso, o bot pode fazer fallback automático para múltiplos provedores por API, usando `Gemini` como fallback principal e `DeepSeek` como fallback econômico opcional.
 
 ## Como funciona
 
@@ -9,14 +9,16 @@ Bot de triagem técnica automática para cards do Trello. Quando um card é cria
 3. O bot identifica se o card foi criado ou movido para uma das listas de triagem configuradas
 4. Após 2 minutos e 30 segundos, baixa os dados do card (título, descrição, checklists, comentários, imagens, planilhas XLSX e documentos Word)
 5. Executa o Claude CLI no diretório do repositório local mapeado pela label do card
-6. Se o Claude informar que atingiu o limite de uso, o bot usa a OpenAI como fallback opcional
-7. Posta um comentário de triagem no card com o resultado da análise
+6. Se o Claude informar que atingiu o limite de uso, o bot tenta os fallbacks configurados por API na ordem definida em `TRIAGE_FALLBACK_PROVIDERS`
+7. Antes de chamar o fallback por API, o bot extrai trechos relevantes do repositório local para reduzir a diferença em relação à análise feita pelo Claude CLI
+8. Posta um comentário de triagem no card com o resultado da análise
 
 ## Pré-requisitos
 
 - **Node.js 18+**
 - **Claude Code CLI** instalado e autenticado (`claude --version` deve funcionar)
-- **OpenAI API Key** opcional, caso você queira habilitar fallback automático quando o Claude atingir o limite
+- **Gemini API Key** opcional, para habilitar o fallback principal
+- **DeepSeek API Key** opcional, para habilitar o fallback econômico
 - **ffmpeg** instalado no sistema (necessário para processar vídeos anexados aos cards)
 - **ngrok** para expor o servidor localmente ao Trello
 - Conta no Trello com API Key, Token e OAuth Secret
@@ -96,12 +98,19 @@ Preencha as variáveis no `.env`:
 | `DEFAULT_REPO_PATH` | Repositório padrão quando o card não tem label `repo:*` |
 | `CLAUDE_BIN` | Caminho ou nome do binário do Claude CLI (padrão: `claude`) |
 | `CLAUDE_MODEL` | Modelo do Claude a usar (ex: `sonnet`, `opus`, `claude-sonnet-4-6`) |
-| `CLAUDE_MAX_TURNS` | Número máximo de turnos do Claude (padrão: `6`) |
-| `OPENAI_API_KEY` | Chave da OpenAI para fallback automático quando o Claude atingir o limite |
-| `OPENAI_MODEL` | Modelo da OpenAI usado no fallback. Exemplo: `gpt-5.1` |
-| `OPENAI_API_BASE_URL` | Base URL da API da OpenAI. Padrão: `https://api.openai.com/v1` |
-| `OPENAI_ORGANIZATION` | Opcional: organização usada na OpenAI |
-| `OPENAI_PROJECT` | Opcional: projeto usado na OpenAI |
+| `CLAUDE_MAX_TURNS` | Número máximo de turnos do Claude (padrão: `30`) |
+| `TRIAGE_FALLBACK_PROVIDERS` | Ordem dos fallbacks por API quando o Claude atingir limite. Padrão: `gemini,deepseek` |
+| `GEMINI_API_KEY` | Chave da API do Gemini para o fallback principal |
+| `GEMINI_MODEL` | Modelo do Gemini usado no fallback principal. Exemplo: `gemini-2.5-pro` |
+| `GEMINI_API_BASE_URL` | Base URL da API do Gemini. Padrão: `https://generativelanguage.googleapis.com/v1beta` |
+| `DEEPSEEK_API_KEY` | Chave da API do DeepSeek para o fallback econômico opcional |
+| `DEEPSEEK_MODEL` | Modelo do DeepSeek usado no fallback econômico. Exemplo: `deepseek-chat` |
+| `DEEPSEEK_API_BASE_URL` | Base URL da API do DeepSeek. Padrão: `https://api.deepseek.com` |
+| `TRIAGE_REPO_CONTEXT_SCAN_LIMIT` | Número máximo de arquivos analisados para montar contexto local do repositório |
+| `TRIAGE_REPO_CONTEXT_SNIPPET_LIMIT` | Quantidade máxima de trechos de código enviados ao fallback por API |
+| `TRIAGE_REPO_CONTEXT_FILE_BYTES_LIMIT` | Tamanho máximo por arquivo lido ao montar contexto local do repositório |
+| `TRIAGE_REPO_CONTEXT_TOTAL_CHARS_LIMIT` | Tamanho máximo total do contexto local enviado ao fallback por API |
+| `TRIAGE_REPO_CONTEXT_TERMS_LIMIT` | Quantidade máxima de termos extraídos do card para localizar arquivos relevantes |
 
 ### Obtendo credenciais do Trello
 
@@ -156,18 +165,28 @@ Se o card não tiver label `repo:*`, o `DEFAULT_REPO_PATH` é usado como fallbac
 
 O bot ignora o sufixo numérico atual ao localizar as listas. Assim, nomes como `Lotes (01)` e `Lotes (12)` continuam sendo reconhecidos como a mesma lista.
 
-### Fallback para OpenAI
+### Fallbacks por API
 
-Se o Claude CLI retornar uma mensagem como `You've hit your limit`, o bot pode enviar a mesma triagem para a OpenAI automaticamente. Para isso, basta configurar `OPENAI_API_KEY` no `.env`.
+Se o Claude CLI retornar uma mensagem como `You've hit your limit`, o bot tenta os provedores configurados em `TRIAGE_FALLBACK_PROVIDERS`.
+
+Por padrão:
+
+- `Gemini` é o fallback principal
+- `DeepSeek` é o fallback econômico opcional
+
+Antes de chamar esses provedores, o bot extrai automaticamente trechos relevantes do repositório local e injeta esse contexto no prompt do fallback. Isso não replica 100% a navegação local do Claude CLI, mas melhora bastante a qualidade do resultado em relação a um fallback sem contexto de código.
 
 Exemplo:
 
 ```env
-OPENAI_API_KEY=<SECRET>
-OPENAI_MODEL=gpt-5.1
+TRIAGE_FALLBACK_PROVIDERS=gemini,deepseek
+GEMINI_API_KEY=<SECRET>
+GEMINI_MODEL=gemini-2.5-pro
+DEEPSEEK_API_KEY=<SECRET>
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
-Se `OPENAI_API_KEY` não estiver definida, o comportamento continua igual ao de hoje: a triagem falha quando o Claude entra em limite.
+Se nenhuma chave de fallback estiver definida, o comportamento continua igual ao de hoje: a triagem falha quando o Claude entra em limite.
 
 ## Instalação e execução
 

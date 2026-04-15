@@ -279,6 +279,7 @@ describe('ClaudeService', () => {
       mockConfig.get.mockImplementation((key: string, def?: string) => {
         if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
         if (key === 'GEMINI_MODEL') return 'gemini-2.5-pro';
+        if (key === 'GEMINI_FALLBACK_MODELS') return 'gemini-2.5-pro';
         return def ?? '';
       });
 
@@ -318,14 +319,17 @@ describe('ClaudeService', () => {
 
       expect(spawnClaudeSpy).toHaveBeenCalledTimes(1);
       expect(fallbackPromptSpy).toHaveBeenCalledWith('prompt', '/repo');
-      expect(geminiSpy).toHaveBeenCalledWith('prompt com contexto', [
-        '/tmp/a.png',
-      ]);
+      expect(geminiSpy).toHaveBeenCalledWith(
+        'prompt com contexto',
+        ['/tmp/a.png'],
+        'gemini-2.5-pro',
+      );
     });
 
     it('usa DeepSeek quando Gemini falha e o fallback econômico está configurado', async () => {
       mockConfig.get.mockImplementation((key: string, def?: string) => {
         if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+        if (key === 'GEMINI_FALLBACK_MODELS') return 'gemini-2.5-pro';
         if (key === 'DEEPSEEK_API_KEY') return 'test-deepseek-key';
         return def ?? '';
       });

@@ -11,12 +11,13 @@ export interface ClaudeTriageResult {
   proximosPassosSugeridos: string[];
 }
 
-type FallbackProviderName = 'gemini' | 'deepseek';
+type FallbackProviderName = 'gemini' | 'deepseek' | 'ollama';
 
 interface FallbackProviderConfig {
   name: FallbackProviderName;
   label: string;
-  apiKey: string;
+  isConfigured: boolean;
+  apiKey?: string;
   model: string;
   baseUrl: string;
 }
@@ -39,6 +40,11 @@ interface DeepSeekChatCompletionResponse {
     };
   }>;
   error?: { message?: string };
+}
+
+interface OllamaGenerateResponse {
+  response?: string;
+  error?: string;
 }
 
 interface RepoCandidate {
@@ -70,10 +76,15 @@ export class ClaudeService {
   private readonly claudeMaxTurns: number;
   private readonly geminiApiKey: string;
   private readonly geminiModel: string;
+  private readonly geminiFallbackModels: string[];
   private readonly geminiApiBaseUrl: string;
   private readonly deepSeekApiKey: string;
   private readonly deepSeekModel: string;
   private readonly deepSeekApiBaseUrl: string;
+  private readonly ollamaModel: string;
+  private readonly ollamaApiBaseUrl: string;
+  private readonly ollamaKeepAlive: string;
+  private readonly ollamaAttachImages: boolean;
   private readonly fallbackProviderOrder: FallbackProviderName[];
 
   private readonly triageJsonSchema = {
@@ -266,6 +277,7 @@ export class ClaudeService {
       'GEMINI_MODEL',
       'gemini-2.5-pro',
     );
+    this.geminiFallbackModels = this.parseGeminiFallbackModels();
     this.geminiApiBaseUrl = this.config
       .get<string>(
         'GEMINI_API_BASE_URL',
@@ -282,6 +294,19 @@ export class ClaudeService {
     this.deepSeekApiBaseUrl = this.config
       .get<string>('DEEPSEEK_API_BASE_URL', 'https://api.deepseek.com')
       .replace(/\/$/, '');
+    this.ollamaModel = this.config
+      .get<string>('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+      .trim();
+    this.ollamaApiBaseUrl = this.config
+      .get<string>('OLLAMA_API_BASE_URL', 'http://127.0.0.1:11434')
+      .replace(/\/$/, '');
+    this.ollamaKeepAlive = this.config
+      .get<string>('OLLAMA_KEEP_ALIVE', '10m')
+      .trim();
+    this.ollamaAttachImages = this.parseBooleanConfig(
+      'OLLAMA_ATTACH_IMAGES',
+      false,
+    );
     this.fallbackProviderOrder = this.parseFallbackProviderOrder();
     this.REPO_CONTEXT_SCAN_LIMIT = this.parseIntegerConfig(
       'TRIAGE_REPO_CONTEXT_SCAN_LIMIT',
@@ -382,7 +407,7 @@ export class ClaudeService {
     if (providers.length === 0) {
       throw new Error(
         'Claude CLI atingiu o limite de uso e nenhum fallback configurado. ' +
-          'Defina GEMINI_API_KEY para o fallback principal ou DEEPSEEK_API_KEY para habilitar o fallback econômico.',
+          'Defina GEMINI_API_KEY, DEEPSEEK_API_KEY ou OLLAMA_MODEL para habilitar um provider alternativo.',
       );
     }
 
@@ -397,9 +422,14 @@ export class ClaudeService {
 
         switch (provider.name) {
           case 'gemini':
-            return await this.runWithGemini(fallbackPrompt, imagePaths);
+            return await this.runWithGeminiFallbackModels(
+              fallbackPrompt,
+              imagePaths,
+            );
           case 'deepseek':
             return await this.runWithDeepSeek(fallbackPrompt);
+          case 'ollama':
+            return await this.runWithOllama(fallbackPrompt, imagePaths);
         }
       } catch (err) {
         lastError = err as Error;
@@ -420,6 +450,7 @@ export class ClaudeService {
       gemini: {
         name: 'gemini',
         label: 'Gemini',
+        isConfigured: Boolean(this.geminiApiKey),
         apiKey: this.geminiApiKey,
         model: this.geminiModel,
         baseUrl: this.geminiApiBaseUrl,
@@ -427,15 +458,23 @@ export class ClaudeService {
       deepseek: {
         name: 'deepseek',
         label: 'DeepSeek',
+        isConfigured: Boolean(this.deepSeekApiKey),
         apiKey: this.deepSeekApiKey,
         model: this.deepSeekModel,
         baseUrl: this.deepSeekApiBaseUrl,
+      },
+      ollama: {
+        name: 'ollama',
+        label: 'Ollama',
+        isConfigured: Boolean(this.ollamaModel),
+        model: this.ollamaModel,
+        baseUrl: this.ollamaApiBaseUrl,
       },
     };
 
     return this.fallbackProviderOrder
       .map((providerName) => providers[providerName])
-      .filter((provider) => provider.apiKey);
+      .filter((provider) => provider.isConfigured);
   }
 
   private parseFallbackProviderOrder(): FallbackProviderName[] {
@@ -443,7 +482,11 @@ export class ClaudeService {
       'TRIAGE_FALLBACK_PROVIDERS',
       'gemini,deepseek',
     );
-    const allowed = new Set<FallbackProviderName>(['gemini', 'deepseek']);
+    const allowed = new Set<FallbackProviderName>([
+      'gemini',
+      'deepseek',
+      'ollama',
+    ]);
     const uniqueProviders = new Set<FallbackProviderName>();
 
     for (const entry of raw.split(',')) {
@@ -461,6 +504,23 @@ export class ClaudeService {
     return uniqueProviders.size > 0
       ? Array.from(uniqueProviders)
       : ['gemini', 'deepseek'];
+  }
+
+  private parseGeminiFallbackModels(): string[] {
+    const raw = this.config.get<string>(
+      'GEMINI_FALLBACK_MODELS',
+      `${this.geminiModel},gemini-2.5-flash`,
+    );
+    const models = raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (models.length > 0) {
+      return Array.from(new Set(models));
+    }
+
+    return [this.geminiModel];
   }
 
   private async buildFallbackPrompt(
@@ -763,12 +823,39 @@ export class ClaudeService {
       .join('\n');
   }
 
-  private async runWithGemini(
+  private async runWithGeminiFallbackModels(
     prompt: string,
     imagePaths: string[],
   ): Promise<ClaudeTriageResult> {
+    let lastError: Error | undefined;
+
+    for (const model of this.geminiFallbackModels) {
+      try {
+        if (model !== this.geminiModel) {
+          this.logger.warn(
+            `Tentando fallback alternativo do Gemini com o modelo ${model}.`,
+          );
+        }
+
+        return await this.runWithGemini(prompt, imagePaths, model);
+      } catch (err) {
+        lastError = err as Error;
+        this.logger.warn(
+          `Gemini falhou com o modelo ${model}: ${lastError.message}`,
+        );
+      }
+    }
+
+    throw lastError ?? new Error('Nenhum modelo do Gemini retornou resposta.');
+  }
+
+  private async runWithGemini(
+    prompt: string,
+    imagePaths: string[],
+    model: string,
+  ): Promise<ClaudeTriageResult> {
     const imageParts = await this.buildGeminiImageParts(imagePaths);
-    const url = `${this.geminiApiBaseUrl}/models/${this.geminiModel}:generateContent?key=${encodeURIComponent(this.geminiApiKey)}`;
+    const url = `${this.geminiApiBaseUrl}/models/${model}:generateContent?key=${encodeURIComponent(this.geminiApiKey)}`;
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -843,6 +930,45 @@ export class ClaudeService {
     return this.parseAndValidate(outputText);
   }
 
+  private async runWithOllama(
+    prompt: string,
+    imagePaths: string[],
+  ): Promise<ClaudeTriageResult> {
+    const url = this.resolveOllamaGenerateUrl();
+    const images = this.ollamaAttachImages
+      ? await this.buildOllamaImages(imagePaths)
+      : [];
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.ollamaModel,
+        prompt,
+        system:
+          'Responda apenas com JSON válido, sem markdown e sem texto fora do objeto.',
+        format: this.triageJsonSchema,
+        stream: false,
+        keep_alive: this.ollamaKeepAlive,
+        ...(images.length > 0 ? { images } : {}),
+      }),
+    });
+
+    const responseBody =
+      (await response.json().catch(() => null)) as OllamaGenerateResponse | null;
+
+    if (!response.ok) {
+      throw new Error(
+        `Ollama erro no fallback local: HTTP ${response.status} — ` +
+          `${responseBody?.error ?? 'sem detalhes'}`,
+      );
+    }
+
+    const outputText = this.extractOllamaOutputText(responseBody);
+    return this.parseAndValidate(outputText);
+  }
+
   private async buildGeminiImageParts(
     imagePaths: string[],
   ): Promise<Array<{ inline_data: { mime_type: string; data: string } }>> {
@@ -866,6 +992,30 @@ export class ClaudeService {
     );
 
     return results.filter((result) => result !== null);
+  }
+
+  private async buildOllamaImages(imagePaths: string[]): Promise<string[]> {
+    const results = await Promise.all(
+      imagePaths.map(async (imagePath) => {
+        try {
+          const buffer = await readFile(imagePath);
+          return buffer.toString('base64');
+        } catch (err) {
+          this.logger.warn(
+            `Não foi possível anexar imagem ao fallback do Ollama (${imagePath}): ${(err as Error).message}`,
+          );
+          return null;
+        }
+      }),
+    );
+
+    return results.filter((result) => result !== null);
+  }
+
+  private resolveOllamaGenerateUrl(): string {
+    return this.ollamaApiBaseUrl.endsWith('/api')
+      ? `${this.ollamaApiBaseUrl}/generate`
+      : `${this.ollamaApiBaseUrl}/api/generate`;
   }
 
   private getImageMimeType(imagePath: string): string {
@@ -919,6 +1069,18 @@ export class ClaudeService {
     throw new Error(
       'DeepSeek API retornou uma resposta sem texto utilizável.',
     );
+  }
+
+  private extractOllamaOutputText(
+    responseBody: OllamaGenerateResponse | null,
+  ): string {
+    const text = responseBody?.response;
+
+    if (text?.trim()) {
+      return text;
+    }
+
+    throw new Error('Ollama retornou uma resposta sem texto utilizável.');
   }
 
   private buildPrompt(
@@ -1175,5 +1337,13 @@ Responda SOMENTE com este JSON (sem nenhum texto fora do objeto):
     const value = this.config.get<string>(key);
     const parsed = parseInt(value ?? '', 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private parseBooleanConfig(key: string, fallback: boolean): boolean {
+    const value = this.config.get<string>(key)?.trim().toLowerCase();
+    if (!value) return fallback;
+    if (['1', 'true', 'yes', 'on'].includes(value)) return true;
+    if (['0', 'false', 'no', 'off'].includes(value)) return false;
+    return fallback;
   }
 }
